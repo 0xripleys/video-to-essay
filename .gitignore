@@ -1,0 +1,18 @@
+venv/
+__pycache__/
+*.pyc
+cookies.txt
+frames/
+*.mp4
+*.mp3
+*.wav
+
+# Generated transcripts and essays (keep as examples if desired, but not by default)
+transcript*.txt
+transcript*.srt
+raw.en.json3
+essay*.md
+
+# Strategy experiment scripts (temporary)
+strategy*.py
+check_coverage.py
