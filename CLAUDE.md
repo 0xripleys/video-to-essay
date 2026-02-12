@@ -9,18 +9,21 @@ Converts YouTube videos into well-structured markdown essays with relevant image
 ## Running the Tool
 
 ```bash
-# Install deps (Python 3.14, prefer uv)
+# Install deps (Python 3.14, prefer uv) — installs package in dev mode
 uv sync
 
 # Full end-to-end pipeline
-ANTHROPIC_API_KEY=sk-... python main.py run <youtube_url>
+ANTHROPIC_API_KEY=sk-... video-to-essay run <youtube_url>
 
 # Individual steps (use video_id for steps after transcript)
-python main.py transcript <url>              # Step 1: extract transcript
-python main.py essay <video_id>              # Step 2: generate essay
-python main.py download <video_id>           # Step 3: download video
-python main.py extract-frames <video_id>     # Step 4: extract + classify frames
-python main.py place-images <video_id>       # Step 5: place images + annotate
+video-to-essay transcript <url>              # Step 1: extract transcript
+video-to-essay essay <video_id>              # Step 2: generate essay
+video-to-essay download <video_id>           # Step 3: download video
+video-to-essay extract-frames <video_id>     # Step 4: extract + classify frames
+video-to-essay place-images <video_id>       # Step 5: place images + annotate
+
+# Alternative: run as module
+python -m video_to_essay.main run <youtube_url>
 
 # Common flags
 --cookies cookies.txt    # Needed on cloud IPs (AWS/GCP/Azure block YouTube)
@@ -28,13 +31,11 @@ python main.py place-images <video_id>       # Step 5: place images + annotate
 --embed                  # Embed images as base64 data URIs
 ```
 
-The legacy standalone scripts (`transcriber.py`, `place_images.py`) still work but `main.py` is the primary entry point.
-
 No test suite yet. Verify changes manually by running against a real YouTube URL.
 
 ## Architecture
 
-`main.py` (typer CLI) orchestrates a 6-step pipeline. Each step is idempotent — it skips if output files already exist unless `--force` is passed.
+The package lives in `src/video_to_essay/`. `main.py` (typer CLI) orchestrates a 6-step pipeline. Each step is idempotent — it skips if output files already exist unless `--force` is passed.
 
 ### Pipeline flow
 
@@ -44,19 +45,19 @@ URL -> transcript -> essay -> download video -> extract frames -> place images -
                                           sample (ffmpeg) -> dedup (pHash) -> classify (Haiku) -> filter
 ```
 
-### Modules
+### Modules (all under `src/video_to_essay/`)
 
 - **`main.py`** — CLI entry point, step orchestration. Output goes to `runs/<video_id>/`.
-- **`transcriber.py`** — Transcript extraction + essay generation (also has argparse CLI for standalone use).
+- **`transcriber.py`** — Transcript extraction + essay generation.
   - Tries `youtube-transcript-api` first, falls back to `yt-dlp`.
   - JSON3 parsing: yt-dlp's subtitle format has rolling duplicates marked with `aAppend`. `parse_json3()` filters these and groups into ~30s paragraphs with timestamps.
   - Essay generation uses "Simple Direct" prompt strategy (scored 8.5/10 on information coverage vs. 4 alternatives).
-- **`extract_frames.py`** — Frame sampling, dedup, classification, filtering. Library only (called by `main.py`).
+- **`extract_frames.py`** — Frame sampling, dedup, classification, filtering.
   - Sample 1 frame every 5s via ffmpeg
   - Perceptual hash (pHash) dedup with Hamming distance ≤ 8
   - Classify unique frames with Claude Haiku + nearby transcript context
   - Keep frames with value ≥ 3, skip "talking_head" and "transition" categories
-- **`place_images.py`** — Image placement + figure annotation (typer CLI with `place` and `annotate` subcommands).
+- **`place_images.py`** — Image placement + figure annotation.
   - `place`: Claude inserts `![](images/frame_*.jpg)` at contextual positions
   - `annotate`: mechanical figure numbering, then Claude in batches weaves "(see Figure N)" into prose
 
@@ -73,7 +74,7 @@ runs/<video_id>/
 
 - **YouTube blocks cloud IPs** — Pass `--cookies` with a Netscape-format cookies.txt. Cookies rotate quickly when used from different IPs.
 - **yt-dlp requires `--remote-components ejs:github`** for YouTube JS challenges, plus `deno` on PATH.
-- **Claude models** — `claude-sonnet-4-5-20250929` is hardcoded in `transcriber.py` and `place_images.py` for essay/image tasks. `extract_frames.py` uses Haiku for frame classification. Update all three files if changing models.
+- **Claude models** — `claude-sonnet-4-5-20250929` is hardcoded in `src/video_to_essay/transcriber.py` and `place_images.py` for essay/image tasks. `extract_frames.py` uses Haiku for frame classification. Update all three files if changing models.
 - **Known output issues** (see ISSUES.md): ad reads treated as content, speaker attribution lost, over-formalized tone, AI embellishment beyond source material.
 
 ## Dependencies Beyond pip

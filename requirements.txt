@@ -1,4 +1,0 @@
-yt-dlp
-youtube-transcript-api
-anthropic
-scenedetect[opencv]

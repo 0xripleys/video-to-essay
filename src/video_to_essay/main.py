@@ -16,14 +16,14 @@ from pathlib import Path
 
 import typer
 
-from extract_frames import extract_and_classify, parse_transcript
-from place_images import (
+from .extract_frames import extract_and_classify, parse_transcript
+from .place_images import (
     annotate_essay,
     embed_images,
     load_kept_frames,
     place_images_in_essay,
 )
-from transcriber import download_video, extract_video_id, fetch_transcript, transcript_to_essay
+from .transcriber import download_video, extract_video_id, fetch_transcript, transcript_to_essay
 
 RUNS_DIR = Path("runs")
 
@@ -193,7 +193,7 @@ def run(
     url: str = typer.Argument(..., help="YouTube video URL"),
     cookies: str | None = typer.Option(None, "--cookies", help="Path to cookies.txt"),
     force: bool = typer.Option(False, "--force", help="Re-run all steps even if outputs exist"),
-    embed: bool = typer.Option(False, "--embed", help="Embed images as base64 data URIs"),
+    embed: bool = typer.Option(True, "--embed/--no-embed", help="Embed images as base64 data URIs"),
 ) -> None:
     """Run the full pipeline: transcript -> essay -> download -> frames -> place images."""
     video_id = extract_video_id(url)
@@ -308,7 +308,7 @@ def extract_frames_cmd(
 @app.command("place-images")
 def place_images_cmd(
     video_id: str = typer.Argument(..., help="YouTube video ID (run dir must exist)"),
-    embed: bool = typer.Option(False, "--embed", help="Embed images as base64 data URIs"),
+    embed: bool = typer.Option(True, "--embed/--no-embed", help="Embed images as base64 data URIs"),
     force: bool = typer.Option(False, "--force", help="Overwrite existing outputs"),
 ) -> None:
     """Place images and annotate figures in existing essay."""
