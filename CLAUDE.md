@@ -4,40 +4,79 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Project Does
 
-Converts YouTube videos into well-structured markdown essays with relevant images. Takes a YouTube URL, extracts the transcript, and uses Claude API to generate a polished essay.
+Converts YouTube videos into well-structured markdown essays with relevant images. Takes a YouTube URL, extracts the transcript, uses Claude API to generate an essay, downloads the video, extracts and classifies keyframes, and places them into the essay with figure annotations.
 
 ## Running the Tool
 
 ```bash
-pip install -r requirements.txt
+# Install deps (Python 3.14, prefer uv)
+uv sync
 
-# Transcript only
-python transcriber.py <youtube_url> --transcript-only
+# Full end-to-end pipeline
+ANTHROPIC_API_KEY=sk-... python main.py run <youtube_url>
 
-# Full essay
-ANTHROPIC_API_KEY=sk-... python transcriber.py <youtube_url> -o essay.md
+# Individual steps (use video_id for steps after transcript)
+python main.py transcript <url>              # Step 1: extract transcript
+python main.py essay <video_id>              # Step 2: generate essay
+python main.py download <video_id>           # Step 3: download video
+python main.py extract-frames <video_id>     # Step 4: extract + classify frames
+python main.py place-images <video_id>       # Step 5: place images + annotate
 
-# With YouTube cookies (needed on cloud IPs)
-python transcriber.py <youtube_url> --cookies cookies.txt -o essay.md
+# Common flags
+--cookies cookies.txt    # Needed on cloud IPs (AWS/GCP/Azure block YouTube)
+--force                  # Re-run steps even if outputs exist
+--embed                  # Embed images as base64 data URIs
 ```
+
+The legacy standalone scripts (`transcriber.py`, `place_images.py`) still work but `main.py` is the primary entry point.
 
 No test suite yet. Verify changes manually by running against a real YouTube URL.
 
 ## Architecture
 
-Single-file tool (`transcriber.py`) with this pipeline:
+`main.py` (typer CLI) orchestrates a 6-step pipeline. Each step is idempotent — it skips if output files already exist unless `--force` is passed.
 
-1. **Transcript extraction** — tries `youtube-transcript-api` first (lightweight, no video download), falls back to `yt-dlp` (needs cookies on cloud IPs, needs `deno` JS runtime)
-2. **JSON3 parsing** — yt-dlp's JSON3 subtitle format has rolling duplicate lines marked with `aAppend`. The `parse_json3()` function filters these out and groups text into ~30s paragraphs with timestamps.
-3. **Essay generation** — sends transcript to Claude Sonnet 4.5 with a minimal "Simple Direct" prompt. This strategy scored 8.5/10 on information coverage, beating 4 other tested approaches.
+### Pipeline flow
+
+```
+URL -> transcript -> essay -> download video -> extract frames -> place images -> annotate figures
+                                                     |
+                                          sample (ffmpeg) -> dedup (pHash) -> classify (Haiku) -> filter
+```
+
+### Modules
+
+- **`main.py`** — CLI entry point, step orchestration. Output goes to `runs/<video_id>/`.
+- **`transcriber.py`** — Transcript extraction + essay generation (also has argparse CLI for standalone use).
+  - Tries `youtube-transcript-api` first, falls back to `yt-dlp`.
+  - JSON3 parsing: yt-dlp's subtitle format has rolling duplicates marked with `aAppend`. `parse_json3()` filters these and groups into ~30s paragraphs with timestamps.
+  - Essay generation uses "Simple Direct" prompt strategy (scored 8.5/10 on information coverage vs. 4 alternatives).
+- **`extract_frames.py`** — Frame sampling, dedup, classification, filtering. Library only (called by `main.py`).
+  - Sample 1 frame every 5s via ffmpeg
+  - Perceptual hash (pHash) dedup with Hamming distance ≤ 8
+  - Classify unique frames with Claude Haiku + nearby transcript context
+  - Keep frames with value ≥ 3, skip "talking_head" and "transition" categories
+- **`place_images.py`** — Image placement + figure annotation (typer CLI with `place` and `annotate` subcommands).
+  - `place`: Claude inserts `![](images/frame_*.jpg)` at contextual positions
+  - `annotate`: mechanical figure numbering, then Claude in batches weaves "(see Figure N)" into prose
+
+### Output structure
+
+```
+runs/<video_id>/
+  metadata.json, transcript.txt, essay.md, video.mp4
+  frames/ { raw/, kept/, classifications.json }
+  essay_with_images.md, essay_final.md
+```
 
 ## Key Technical Details
 
-- **YouTube blocks cloud IPs** — both `youtube-transcript-api` and `yt-dlp` get blocked from AWS/GCP/Azure. Pass `--cookies` with a fresh Netscape-format cookies.txt exported from a browser. Cookies get rotated quickly when used from a different IP.
-- **yt-dlp requires `--remote-components ejs:github`** flag for YouTube JS challenge solving, plus `deno` installed and on PATH.
-- **Image extraction is not yet implemented** — PySceneDetect and ffmpeg are listed as dependencies for future frame extraction from downloaded videos. See PLAN.md Phase 2.
+- **YouTube blocks cloud IPs** — Pass `--cookies` with a Netscape-format cookies.txt. Cookies rotate quickly when used from different IPs.
+- **yt-dlp requires `--remote-components ejs:github`** for YouTube JS challenges, plus `deno` on PATH.
+- **Claude models** — `claude-sonnet-4-5-20250929` is hardcoded in `transcriber.py` and `place_images.py` for essay/image tasks. `extract_frames.py` uses Haiku for frame classification. Update all three files if changing models.
+- **Known output issues** (see ISSUES.md): ad reads treated as content, speaker attribution lost, over-formalized tone, AI embellishment beyond source material.
 
 ## Dependencies Beyond pip
 
-- `ffmpeg` — static binary, needed by yt-dlp and scenedetect
-- `deno` — JS runtime, needed by yt-dlp for YouTube's JS challenges
+- `ffmpeg` — needed by yt-dlp and frame extraction
+- `deno` — JS runtime for yt-dlp YouTube challenges

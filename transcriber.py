@@ -1,20 +1,16 @@
 """
-YouTube Video to Essay Tool
+YouTube Video to Essay — transcript extraction, essay generation, and video download.
 
-Extracts a transcript from a YouTube video and converts it to a well-structured essay
-using Claude API.
-
-Usage:
-    python transcriber.py <youtube_url> [--cookies <cookies.txt>] [--output <output.md>]
+Used as a library by main.py. Not intended to be run directly.
 """
 
-import argparse
 import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 
 def extract_video_id(url: str) -> str:
@@ -172,50 +168,39 @@ def fetch_transcript(video_id: str, cookies_path: str | None = None) -> str:
     return fetch_transcript_ytdlp(video_id, cookies_path)
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Convert a YouTube video into a well-written essay."
-    )
-    parser.add_argument("url", help="YouTube video URL or video ID")
-    parser.add_argument("--cookies", help="Path to cookies.txt for YouTube auth")
-    parser.add_argument("--output", "-o", help="Output file path (default: stdout)")
-    parser.add_argument("--api-key", help="Anthropic API key (or set ANTHROPIC_API_KEY)")
-    parser.add_argument(
-        "--transcript-only",
-        action="store_true",
-        help="Only extract and print the transcript, don't generate essay",
-    )
-    args = parser.parse_args()
+def download_video(
+    video_id: str, output_path: Path, cookies_path: str | None = None
+) -> Path:
+    """Download a YouTube video using yt-dlp.
 
-    video_id = extract_video_id(args.url)
-    print(f"Video ID: {video_id}")
+    Returns the path to the downloaded video file.
+    """
+    cmd = [
+        sys.executable, "-m", "yt_dlp",
+        "--remote-components", "ejs:github",
+        "-o", str(output_path),
+        f"https://www.youtube.com/watch?v={video_id}",
+    ]
+    if cookies_path:
+        cmd.extend(["--cookies", cookies_path])
 
-    # Step 1: Extract transcript
-    transcript = fetch_transcript(video_id, args.cookies)
-    print(f"Transcript: {len(transcript)} characters")
+    print(f"Downloading video {video_id}...")
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
 
-    if args.transcript_only:
-        if args.output:
-            with open(args.output, "w") as f:
-                f.write(transcript)
-            print(f"Transcript saved to {args.output}")
-        else:
-            print(transcript)
-        return
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"yt-dlp video download failed.\n"
+            f"stderr: {result.stderr}\n"
+            f"stdout: {result.stdout}"
+        )
 
-    # Step 2: Generate essay
-    print("Generating essay...")
-    essay = transcript_to_essay(transcript, args.api_key)
-    print(f"Essay: {len(essay)} characters")
+    # yt-dlp may add an extension — find the actual file
+    parent = output_path.parent
+    stem = output_path.stem
+    candidates = sorted(parent.glob(f"{stem}.*"))
+    if not candidates:
+        raise RuntimeError(
+            f"Download appeared to succeed but no file found matching {output_path}"
+        )
 
-    if args.output:
-        with open(args.output, "w") as f:
-            f.write(essay)
-        print(f"Essay saved to {args.output}")
-    else:
-        print("\n" + "=" * 80)
-        print(essay)
-
-
-if __name__ == "__main__":
-    main()
+    return candidates[0]

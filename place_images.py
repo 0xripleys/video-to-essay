@@ -1,9 +1,7 @@
 """
 Place extracted video frames into essays and annotate with figure references.
 
-Commands:
-  place    — Insert images into an existing essay via LLM (step 3)
-  annotate — Number images as figures with captions, add figure references into prose (step 4)
+Used as a library by main.py. Not intended to be run directly.
 """
 
 import base64
@@ -12,17 +10,13 @@ import re
 from pathlib import Path
 
 import anthropic
-import typer
-
-app = typer.Typer(help="Place extracted video frames into essays and annotate with figures.")
 
 
 def load_kept_frames(frames_dir: Path) -> list[dict[str, str | int]]:
     """Load classifications.json and filter to only frames present in kept/."""
     classifications_path = frames_dir / "classifications.json"
     if not classifications_path.exists():
-        typer.echo(f"Error: {classifications_path} not found", err=True)
-        raise typer.Exit(1)
+        raise FileNotFoundError(f"{classifications_path} not found")
 
     all_classifications: list[dict[str, str | int]] = json.loads(
         classifications_path.read_text()
@@ -36,38 +30,37 @@ def load_kept_frames(frames_dir: Path) -> list[dict[str, str | int]]:
     return kept
 
 
-def format_frame_list(frames: list[dict[str, str | int]]) -> str:
+def format_frame_list(
+    frames: list[dict[str, str | int]], image_prefix: str = "images/"
+) -> str:
     """Format kept frames into a text list for LLM prompts."""
     lines: list[str] = []
     for f in frames:
         lines.append(
-            f"- images/{f['frame']} [{f['timestamp']}] - {f.get('description', '')}"
+            f"- {image_prefix}{f['frame']} [{f['timestamp']}] - {f.get('description', '')}"
         )
     return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
-# Step 3: Place images into essay
+# Place images into essay
 # ---------------------------------------------------------------------------
 
-@app.command()
-def place(
-    essay: Path = typer.Option(..., "--essay", "-e", help="Pre-generated essay markdown file"),
-    frames_dir: Path = typer.Option(Path("frames"), "--frames-dir", "-f", help="Directory with classifications.json and kept/"),
-    output: Path = typer.Option(Path("essay_with_images.md"), "--output", "-o", help="Output markdown file"),
-    embed: bool = typer.Option(False, "--embed", help="Embed images as base64 data URIs"),
-) -> None:
-    """Step 3: Insert images into an existing essay via LLM."""
-    essay_text = essay.read_text()
-    kept = load_kept_frames(frames_dir)
+def place_images_in_essay(
+    essay_text: str,
+    kept_frames: list[dict[str, str | int]],
+    image_prefix: str = "images/",
+) -> str:
+    """Insert images into an essay at appropriate positions via LLM.
 
-    if not kept:
-        typer.echo("No kept frames found. Aborting.", err=True)
-        raise typer.Exit(1)
+    Returns the essay text with image markdown lines inserted.
+    """
+    if not kept_frames:
+        raise ValueError("No kept frames to place")
 
-    typer.echo(f"Inserting {len(kept)} images into existing essay...")
+    print(f"Inserting {len(kept_frames)} images into essay...")
 
-    frame_list = format_frame_list(kept)
+    frame_list = format_frame_list(kept_frames, image_prefix)
 
     client = anthropic.Anthropic()
     msg = client.messages.create(
@@ -91,16 +84,12 @@ def place(
     )
 
     result = msg.content[0].text
-    _print_image_stats(result, kept)
-    if embed:
-        result = embed_images(result, frames_dir)
-        typer.echo("Embedded images as base64 data URIs")
-    output.write_text(result)
-    typer.echo(f"Wrote {len(result)} chars to {output}")
+    _print_image_stats(result, kept_frames)
+    return result
 
 
 # ---------------------------------------------------------------------------
-# Step 4: Annotate — add figure numbers, captions, and prose references
+# Annotate — add figure numbers, captions, and prose references
 # ---------------------------------------------------------------------------
 
 def _number_figures(essay: str) -> tuple[str, list[tuple[int, str, str]]]:
@@ -127,69 +116,70 @@ def _number_figures(essay: str) -> tuple[str, list[tuple[int, str, str]]]:
     return result, figures
 
 
-@app.command()
-def annotate(
-    essay: Path = typer.Option(..., "--essay", "-e", help="Essay markdown with images already placed"),
-    output: Path = typer.Option(Path("essay_annotated.md"), "--output", "-o", help="Output markdown file"),
-    frames_dir: Path = typer.Option(Path("frames"), "--frames-dir", "-f", help="Directory with kept/ (for --embed)"),
-    embed: bool = typer.Option(False, "--embed", help="Embed images as base64 data URIs"),
-) -> None:
-    """Step 4: Add figure numbers, captions, and weave figure references into prose."""
-    essay_text = essay.read_text()
+def annotate_essay(
+    essay_text: str,
+    batch_size: int = 5,
+) -> str:
+    """Add figure numbers, captions, and weave figure references into prose.
 
-    # Step 4a: Mechanically number figures and add captions
+    Returns the annotated essay text.
+    """
+    # Step 1: Mechanically number figures and add captions
     numbered_essay, figures = _number_figures(essay_text)
 
     if not figures:
-        typer.echo("No images found in essay. Nothing to annotate.", err=True)
-        raise typer.Exit(1)
+        raise ValueError("No images found in essay. Nothing to annotate.")
 
-    typer.echo(f"Numbered {len(figures)} figures. Adding references via LLM...")
+    print(f"Numbered {len(figures)} figures. Adding references via LLM in batches of {batch_size}...")
 
-    # Build a figure summary for the prompt
-    figure_summary = "\n".join(
-        f"- Figure {num}: {alt}" for num, alt, _src in figures
-    )
-
-    # Step 4b: LLM pass to insert natural figure references into prose
+    # Step 2: LLM passes to insert figure references, batch_size figures at a time
     client = anthropic.Anthropic()
-    msg = client.messages.create(
-        model="claude-sonnet-4-5-20250929",
-        max_tokens=8192,
-        messages=[
-            {
-                "role": "user",
-                "content": (
-                    "Below is a markdown essay with numbered figures (images with captions like "
-                    "**Figure N:** description). Your task is to add natural references to these "
-                    "figures in the essay prose.\n\n"
-                    "Rules:\n"
-                    "- Add references like '(see Figure 1)', 'as shown in Figure 3', "
-                    "'Figure 2 illustrates', etc. in the most relevant nearby paragraph\n"
-                    "- Every figure must be referenced at least once in the prose\n"
-                    "- Do NOT move, remove, or modify the image lines or figure captions\n"
-                    "- Do NOT rewrite the prose — only insert short figure references into "
-                    "existing sentences\n"
-                    "- Return the complete essay\n\n"
-                    f"Figures in this essay:\n{figure_summary}\n\n"
-                    f"Essay:\n{numbered_essay}"
-                ),
-            }
-        ],
-    )
+    result = numbered_essay
 
-    result = msg.content[0].text
-    if embed:
-        result = embed_images(result, frames_dir)
-        typer.echo("Embedded images as base64 data URIs")
-    output.write_text(result)
-    typer.echo(f"Wrote {len(result)} chars to {output}")
+    for i in range(0, len(figures), batch_size):
+        batch = figures[i : i + batch_size]
+        figure_summary = "\n".join(
+            f"- Figure {num}: {alt}" for num, alt, _src in batch
+        )
+        batch_nums = ", ".join(str(num) for num, _, _ in batch)
+        print(f"  Batch: Figure {batch_nums}...")
 
-    # Count figure references in prose
+        msg = client.messages.create(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=16384,
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        "Below is a markdown essay with numbered figures (images with captions like "
+                        "*Figure N: description*). Your task is to add natural references to ONLY "
+                        "the following figures in the essay prose.\n\n"
+                        "Rules:\n"
+                        "- Add references like '(see Figure 1)', 'as shown in Figure 3', "
+                        "'Figure 2 illustrates', etc. in the most relevant nearby paragraph\n"
+                        "- ONLY add references for the figures listed below — do not touch "
+                        "any existing figure references already in the text\n"
+                        "- Every listed figure must be referenced at least once in the prose\n"
+                        "- Do NOT move, remove, or modify the image lines or figure captions\n"
+                        "- Do NOT rewrite the prose — only insert short figure references into "
+                        "existing sentences\n"
+                        "- Return the complete essay\n\n"
+                        f"Figures to reference:\n{figure_summary}\n\n"
+                        f"Essay:\n{result}"
+                    ),
+                }
+            ],
+        )
+
+        result = msg.content[0].text
+
+    # Report figure reference coverage
     for num, alt, _src in figures:
         ref_count = len(re.findall(rf"Figure\s+{num}\b", result)) - 1  # subtract the caption itself
         status = "ok" if ref_count > 0 else "MISSING"
-        typer.echo(f"  Figure {num}: {ref_count} reference(s) [{status}] — {alt[:60]}")
+        print(f"  Figure {num}: {ref_count} reference(s) [{status}] — {alt[:60]}")
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -221,17 +211,13 @@ def _print_image_stats(essay: str, kept: list[dict[str, str | int]]) -> None:
     kept_names = {str(f["frame"]) for f in kept}
 
     total_placed = len(placed_names) or data_uri_count
-    typer.echo(f"\nImage placement stats:")
-    typer.echo(f"  Available: {len(kept_names)}")
-    typer.echo(f"  Placed:    {total_placed}")
+    print(f"\nImage placement stats:")
+    print(f"  Available: {len(kept_names)}")
+    print(f"  Placed:    {total_placed}")
     if placed_names:
         missing = kept_names - placed_names
         if missing:
-            typer.echo(f"  Missing:   {', '.join(sorted(missing))}")
+            print(f"  Missing:   {', '.join(sorted(missing))}")
         extra = placed_names - kept_names
         if extra:
-            typer.echo(f"  Extra:     {', '.join(sorted(extra))}")
-
-
-if __name__ == "__main__":
-    app()
+            print(f"  Extra:     {', '.join(sorted(extra))}")

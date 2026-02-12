@@ -1,7 +1,7 @@
 """
-Experiment: Fixed-interval sampling + hash dedup + Vision LLM classification.
+Frame extraction — sample, dedup, classify, and filter video frames.
 
-Extracts useful frames from a video for essay illustration.
+Used as a library by main.py. Not intended to be run directly.
 
 Pipeline:
   1. Sample 1 frame every N seconds using ffmpeg
@@ -20,10 +20,7 @@ from pathlib import Path
 import anthropic
 import cv2
 import imagehash
-import typer
 from PIL import Image
-
-app = typer.Typer()
 
 
 def parse_transcript(transcript: str) -> list[tuple[int, str]]:
@@ -209,7 +206,7 @@ def classify_frames(
         parsed["file"] = str(frame_path)
         results.append(parsed)
 
-        typer.echo(
+        print(
             f"  [{timestamp}] {frame_path.name}: "
             f"{parsed.get('category', '?')} (value={parsed.get('value', '?')}) "
             f"- {parsed.get('description', '')[:80]}"
@@ -218,75 +215,46 @@ def classify_frames(
     return results
 
 
-@app.command()
-def extract(
-    video: Path = typer.Argument(..., help="Path to video file"),
-    output_dir: Path = typer.Option(
-        Path("frames"), "--output", "-o", help="Output directory for frames"
-    ),
-    interval: int = typer.Option(
-        5, "--interval", "-i", help="Seconds between frame samples"
-    ),
-    max_hamming: int = typer.Option(
-        8, "--max-hamming", help="Max Hamming distance for dedup clustering"
-    ),
-    min_value: int = typer.Option(
-        3, "--min-value", help="Minimum LLM value score to keep a frame (1-5)"
-    ),
-    skip_categories: str = typer.Option(
-        "talking_head,transition",
-        "--skip",
-        help="Comma-separated categories to discard",
-    ),
-    transcript: Path | None = typer.Option(
-        None, "--transcript", "-t", help="Transcript file with [MM:SS] timestamps"
-    ),
-    video_id: str | None = typer.Option(
-        None, "--video-id", help="YouTube video ID to auto-fetch transcript"
-    ),
-) -> None:
-    """Extract useful frames from a video using vision LLM classification."""
+def extract_and_classify(
+    video: Path,
+    output_dir: Path,
+    interval: int = 5,
+    transcript_entries: list[tuple[int, str]] | None = None,
+    max_hamming: int = 8,
+    min_value: int = 3,
+    skip_categories: set[str] | None = None,
+) -> list[dict[str, str | int]]:
+    """Full frame extraction pipeline: sample -> dedup -> classify -> filter -> save.
+
+    Returns the list of kept frame classifications.
+    """
+    if skip_categories is None:
+        skip_categories = {"talking_head", "transition"}
+
     if not video.exists():
-        typer.echo(f"Error: {video} not found", err=True)
-        raise typer.Exit(1)
-
-    skip_set = {c.strip() for c in skip_categories.split(",")}
-
-    # Load or fetch transcript
-    transcript_entries: list[tuple[int, str]] | None = None
-    if transcript:
-        typer.echo(f"Loading transcript from {transcript}...")
-        transcript_entries = parse_transcript(transcript.read_text())
-        typer.echo(f"  {len(transcript_entries)} lines loaded")
-    elif video_id:
-        typer.echo(f"Fetching transcript for {video_id}...")
-        from transcriber import fetch_transcript
-
-        raw = fetch_transcript(video_id)
-        transcript_entries = parse_transcript(raw)
-        typer.echo(f"  {len(transcript_entries)} lines loaded")
+        raise FileNotFoundError(f"Video not found: {video}")
 
     # Step 1: Sample frames
     raw_dir = output_dir / "raw"
-    typer.echo(f"Step 1: Sampling 1 frame every {interval}s...")
+    print(f"Step 1: Sampling 1 frame every {interval}s...")
     frames = sample_frames(video, raw_dir, interval)
-    typer.echo(f"  Extracted {len(frames)} frames")
+    print(f"  Extracted {len(frames)} frames")
 
     # Step 2: Dedup
-    typer.echo(f"Step 2: Deduplicating (max Hamming distance={max_hamming})...")
+    print(f"Step 2: Deduplicating (max Hamming distance={max_hamming})...")
     hashes = compute_hashes(frames)
     unique_frames = dedup_frames(frames, hashes, max_hamming)
-    typer.echo(f"  {len(frames)} → {len(unique_frames)} unique frames")
+    print(f"  {len(frames)} -> {len(unique_frames)} unique frames")
 
     # Step 3: Classify with vision LLM
-    typer.echo(f"Step 3: Classifying {len(unique_frames)} frames with Claude Haiku...")
+    print(f"Step 3: Classifying {len(unique_frames)} frames with Claude Haiku...")
     classifications = classify_frames(unique_frames, interval, transcript_entries)
 
     # Step 4: Filter
-    typer.echo(f"\nStep 4: Filtering (min_value={min_value}, skip={skip_set})...")
+    print(f"\nStep 4: Filtering (min_value={min_value}, skip={skip_categories})...")
     kept: list[dict[str, str | int]] = []
     for c in classifications:
-        if c.get("category") in skip_set:
+        if c.get("category") in skip_categories:
             continue
         if c.get("value", 0) >= min_value:
             kept.append(c)
@@ -303,22 +271,20 @@ def extract(
     results_path = output_dir / "classifications.json"
     results_path.write_text(json.dumps(classifications, indent=2))
 
-    typer.echo(f"\nResults:")
-    typer.echo(f"  Total sampled:    {len(frames)}")
-    typer.echo(f"  After dedup:      {len(unique_frames)}")
-    typer.echo(f"  After filtering:  {len(kept)}")
-    typer.echo(f"  Kept frames in:   {kept_dir}")
-    typer.echo(f"  Full results:     {results_path}")
+    print(f"\nResults:")
+    print(f"  Total sampled:    {len(frames)}")
+    print(f"  After dedup:      {len(unique_frames)}")
+    print(f"  After filtering:  {len(kept)}")
+    print(f"  Kept frames in:   {kept_dir}")
+    print(f"  Full results:     {results_path}")
 
     if kept:
-        typer.echo(f"\nKept frames:")
+        print(f"\nKept frames:")
         for item in kept:
-            typer.echo(
+            print(
                 f"  [{item['timestamp']}] {item['frame']}: "
                 f"{item['category']} (value={item['value']}) "
                 f"- {item.get('description', '')[:80]}"
             )
 
-
-if __name__ == "__main__":
-    app()
+    return kept

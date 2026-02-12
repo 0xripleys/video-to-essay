@@ -1,17 +1,23 @@
 venv/
+runs/
 __pycache__/
 *.pyc
+.DS_Store
 cookies.txt
+.env
 frames/
+frames_*/
 *.mp4
 *.mp3
 *.wav
+*.webm
 
-# Generated transcripts and essays (keep as examples if desired, but not by default)
+# Generated transcripts and essays (now go in runs/)
 transcript*.txt
 transcript*.srt
 raw.en.json3
 essay*.md
+PLAN.md
 
 # Strategy experiment scripts (temporary)
 strategy*.py
