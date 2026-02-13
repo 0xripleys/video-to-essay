@@ -28,14 +28,14 @@ python -m video_to_essay.main run <youtube_url>
 # Common flags
 --cookies cookies.txt    # Needed on cloud IPs (AWS/GCP/Azure block YouTube)
 --force                  # Re-run steps even if outputs exist
---embed                  # Embed images as base64 data URIs
+--no-embed               # Disable base64 image embedding (embed is ON by default)
 ```
 
 No test suite yet. Verify changes manually by running against a real YouTube URL.
 
 ## Architecture
 
-The package lives in `src/video_to_essay/`. `main.py` (typer CLI) orchestrates a 6-step pipeline. Each step is idempotent — it skips if output files already exist unless `--force` is passed.
+The package lives in `src/video_to_essay/`. `main.py` (typer CLI) orchestrates a 5-step pipeline (annotate is bundled into place-images). Each step is idempotent — it skips if output files already exist unless `--force` is passed.
 
 ### Pipeline flow
 
@@ -74,7 +74,7 @@ runs/<video_id>/
 
 - **YouTube blocks cloud IPs** — Pass `--cookies` with a Netscape-format cookies.txt. Cookies rotate quickly when used from different IPs.
 - **yt-dlp requires `--remote-components ejs:github`** for YouTube JS challenges, plus `deno` on PATH.
-- **Claude models** — `claude-sonnet-4-5-20250929` is hardcoded in `src/video_to_essay/transcriber.py` and `place_images.py` for essay/image tasks. `extract_frames.py` uses Haiku for frame classification. Update all three files if changing models.
+- **Claude models** — `claude-sonnet-4-5-20250929` is hardcoded in `transcriber.py` and `place_images.py` for essay/image tasks. `extract_frames.py` uses `claude-haiku-4-5-20251001` for frame classification. Update all three files if changing models.
 - **Known output issues** (see ISSUES.md): ad reads treated as content, speaker attribution lost, over-formalized tone, AI embellishment beyond source material.
 
 ## Dependencies Beyond pip
