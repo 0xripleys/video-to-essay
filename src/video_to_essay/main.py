@@ -4,6 +4,7 @@ Video-to-Essay pipeline — single entry point for all steps.
 Usage:
     python main.py run <url>                    # Full pipeline
     python main.py transcript <url>             # Extract transcript only
+    python main.py filter-sponsors <video_id>   # Filter sponsor/ad segments
     python main.py essay <video_id>             # Generate essay from transcript
     python main.py download <video_id>          # Download video
     python main.py extract-frames <video_id>    # Extract + classify frames
@@ -16,7 +17,10 @@ from pathlib import Path
 
 import typer
 
+DEFAULT_RUNS_DIR = Path("runs")
+
 from .extract_frames import extract_and_classify, parse_transcript
+from .filter_sponsors import filter_sponsors
 from .place_images import (
     annotate_essay,
     embed_images,
@@ -25,14 +29,13 @@ from .place_images import (
 )
 from .transcriber import download_video, extract_video_id, fetch_transcript, transcript_to_essay
 
-RUNS_DIR = Path("runs")
-
 app = typer.Typer(help="Convert YouTube videos into illustrated essays.")
 
 
-def _run_dir(video_id: str) -> Path:
+def _run_dir(video_id: str, output_dir: Path | None = None) -> Path:
     """Return and create the run directory for a video."""
-    d = RUNS_DIR / video_id
+    base = output_dir if output_dir else DEFAULT_RUNS_DIR
+    d = base / video_id
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -68,14 +71,44 @@ def _step_transcript(
         return False
 
 
-def _step_essay(video_id: str, run_dir: Path, force: bool) -> bool:
+def _step_filter_sponsors(video_id: str, run_dir: Path, force: bool) -> bool:
     transcript_path = run_dir / "transcript.txt"
+    clean_path = run_dir / "transcript_clean.txt"
+    segments_path = run_dir / "sponsor_segments.json"
+    if clean_path.exists() and segments_path.exists() and not force:
+        print(f"Filtered transcript exists, skipping ({clean_path})")
+        return True
+    if not transcript_path.exists():
+        print(f"ERROR: {transcript_path} not found — run transcript step first")
+        return False
+    try:
+        cleaned, sponsor_ranges = filter_sponsors(transcript_path.read_text())
+        clean_path.write_text(cleaned)
+        segments_path.write_text(json.dumps(sponsor_ranges, indent=2))
+        if sponsor_ranges:
+            print(f"Found {len(sponsor_ranges)} sponsor segment(s):")
+            for start, end in sponsor_ranges:
+                print(f"  {start // 60:02d}:{start % 60:02d} - {end // 60:02d}:{end % 60:02d}")
+        else:
+            print("No sponsor segments detected")
+        print(f"Cleaned transcript -> {clean_path}")
+        return True
+    except Exception as e:
+        print(f"ERROR in filter-sponsors step: {e}")
+        return False
+
+
+def _step_essay(video_id: str, run_dir: Path, force: bool) -> bool:
+    # Prefer cleaned transcript (sponsor-filtered), fall back to raw
+    transcript_path = run_dir / "transcript_clean.txt"
+    if not transcript_path.exists():
+        transcript_path = run_dir / "transcript.txt"
     out = run_dir / "essay.md"
     if out.exists() and not force:
         print(f"Essay exists, skipping ({out})")
         return True
     if not transcript_path.exists():
-        print(f"ERROR: {transcript_path} not found — run transcript step first")
+        print(f"ERROR: no transcript found — run transcript step first")
         return False
     try:
         text = transcript_to_essay(transcript_path.read_text())
@@ -126,11 +159,21 @@ def _step_extract_frames(video_id: str, run_dir: Path, force: bool) -> bool:
         transcript_entries = parse_transcript(transcript_path.read_text())
         print(f"Using transcript context ({len(transcript_entries)} lines)")
 
+    # Load sponsor ranges if available
+    sponsor_ranges: list[tuple[int, int]] | None = None
+    segments_path = run_dir / "sponsor_segments.json"
+    if segments_path.exists():
+        raw_ranges = json.loads(segments_path.read_text())
+        sponsor_ranges = [(s, e) for s, e in raw_ranges]
+        if sponsor_ranges:
+            print(f"Using {len(sponsor_ranges)} sponsor range(s) for frame filtering")
+
     try:
         extract_and_classify(
             video=video_path,
             output_dir=frames_dir,
             transcript_entries=transcript_entries,
+            sponsor_ranges=sponsor_ranges,
         )
         return True
     except Exception as e:
@@ -194,10 +237,11 @@ def run(
     cookies: str | None = typer.Option(None, "--cookies", help="Path to cookies.txt"),
     force: bool = typer.Option(False, "--force", help="Re-run all steps even if outputs exist"),
     embed: bool = typer.Option(True, "--embed/--no-embed", help="Embed images as base64 data URIs"),
+    output_dir: Path | None = typer.Option(None, "--output-dir", "-o", help="Base output directory (default: runs/)"),
 ) -> None:
-    """Run the full pipeline: transcript -> essay -> download -> frames -> place images."""
+    """Run the full pipeline: transcript -> filter sponsors -> essay -> download -> frames -> place images."""
     video_id = extract_video_id(url)
-    run_dir = _run_dir(video_id)
+    run_dir = _run_dir(video_id, output_dir)
     _save_metadata(run_dir, url, video_id)
     print(f"Video ID: {video_id}")
     print(f"Run dir:  {run_dir}\n")
@@ -205,7 +249,7 @@ def run(
     steps: list[tuple[str, bool]] = []
 
     print("=" * 60)
-    print("Step 1/6: Transcript")
+    print("Step 1/7: Transcript")
     print("=" * 60)
     ok = _step_transcript(video_id, run_dir, cookies, force)
     steps.append(("transcript", ok))
@@ -214,7 +258,16 @@ def run(
         raise typer.Exit(1)
 
     print(f"\n{'=' * 60}")
-    print("Step 2/6: Essay")
+    print("Step 2/7: Filter sponsors")
+    print("=" * 60)
+    ok = _step_filter_sponsors(video_id, run_dir, force)
+    steps.append(("filter-sponsors", ok))
+    if not ok:
+        print("\nPipeline stopped at filter-sponsors step.")
+        raise typer.Exit(1)
+
+    print(f"\n{'=' * 60}")
+    print("Step 3/7: Essay")
     print("=" * 60)
     ok = _step_essay(video_id, run_dir, force)
     steps.append(("essay", ok))
@@ -223,7 +276,7 @@ def run(
         raise typer.Exit(1)
 
     print(f"\n{'=' * 60}")
-    print("Step 3/6: Download video")
+    print("Step 4/7: Download video")
     print("=" * 60)
     ok = _step_download(video_id, run_dir, cookies, force)
     steps.append(("download", ok))
@@ -232,7 +285,7 @@ def run(
         raise typer.Exit(1)
 
     print(f"\n{'=' * 60}")
-    print("Step 4/6: Extract frames")
+    print("Step 5/7: Extract frames")
     print("=" * 60)
     ok = _step_extract_frames(video_id, run_dir, force)
     steps.append(("extract-frames", ok))
@@ -241,7 +294,7 @@ def run(
         raise typer.Exit(1)
 
     print(f"\n{'=' * 60}")
-    print("Step 5-6/6: Place images + annotate")
+    print("Step 6-7/7: Place images + annotate")
     print("=" * 60)
     ok = _step_place_images(video_id, run_dir, embed, force)
     steps.append(("place-images", ok))
@@ -260,10 +313,11 @@ def transcript(
     url: str = typer.Argument(..., help="YouTube video URL"),
     cookies: str | None = typer.Option(None, "--cookies", help="Path to cookies.txt"),
     force: bool = typer.Option(False, "--force", help="Overwrite existing transcript"),
+    output_dir: Path | None = typer.Option(None, "--output-dir", "-o", help="Base output directory (default: runs/)"),
 ) -> None:
     """Extract transcript only."""
     video_id = extract_video_id(url)
-    run_dir = _run_dir(video_id)
+    run_dir = _run_dir(video_id, output_dir)
     _save_metadata(run_dir, url, video_id)
     print(f"Video ID: {video_id}")
 
@@ -271,13 +325,26 @@ def transcript(
         raise typer.Exit(1)
 
 
+@app.command("filter-sponsors")
+def filter_sponsors_cmd(
+    video_id: str = typer.Argument(..., help="YouTube video ID (run dir must exist)"),
+    force: bool = typer.Option(False, "--force", help="Re-run sponsor filtering"),
+    output_dir: Path | None = typer.Option(None, "--output-dir", "-o", help="Base output directory (default: runs/)"),
+) -> None:
+    """Filter sponsor/ad segments from existing transcript."""
+    run_dir = _run_dir(video_id, output_dir)
+    if not _step_filter_sponsors(video_id, run_dir, force):
+        raise typer.Exit(1)
+
+
 @app.command()
 def essay(
     video_id: str = typer.Argument(..., help="YouTube video ID (run dir must exist)"),
     force: bool = typer.Option(False, "--force", help="Overwrite existing essay"),
+    output_dir: Path | None = typer.Option(None, "--output-dir", "-o", help="Base output directory (default: runs/)"),
 ) -> None:
     """Generate essay from existing transcript."""
-    run_dir = _run_dir(video_id)
+    run_dir = _run_dir(video_id, output_dir)
     if not _step_essay(video_id, run_dir, force):
         raise typer.Exit(1)
 
@@ -287,9 +354,10 @@ def download(
     video_id: str = typer.Argument(..., help="YouTube video ID (run dir must exist)"),
     cookies: str | None = typer.Option(None, "--cookies", help="Path to cookies.txt"),
     force: bool = typer.Option(False, "--force", help="Overwrite existing video"),
+    output_dir: Path | None = typer.Option(None, "--output-dir", "-o", help="Base output directory (default: runs/)"),
 ) -> None:
     """Download video only."""
-    run_dir = _run_dir(video_id)
+    run_dir = _run_dir(video_id, output_dir)
     if not _step_download(video_id, run_dir, cookies, force):
         raise typer.Exit(1)
 
@@ -298,9 +366,10 @@ def download(
 def extract_frames_cmd(
     video_id: str = typer.Argument(..., help="YouTube video ID (run dir must exist)"),
     force: bool = typer.Option(False, "--force", help="Re-extract frames"),
+    output_dir: Path | None = typer.Option(None, "--output-dir", "-o", help="Base output directory (default: runs/)"),
 ) -> None:
     """Extract and classify frames from existing video."""
-    run_dir = _run_dir(video_id)
+    run_dir = _run_dir(video_id, output_dir)
     if not _step_extract_frames(video_id, run_dir, force):
         raise typer.Exit(1)
 
@@ -310,9 +379,10 @@ def place_images_cmd(
     video_id: str = typer.Argument(..., help="YouTube video ID (run dir must exist)"),
     embed: bool = typer.Option(True, "--embed/--no-embed", help="Embed images as base64 data URIs"),
     force: bool = typer.Option(False, "--force", help="Overwrite existing outputs"),
+    output_dir: Path | None = typer.Option(None, "--output-dir", "-o", help="Base output directory (default: runs/)"),
 ) -> None:
     """Place images and annotate figures in existing essay."""
-    run_dir = _run_dir(video_id)
+    run_dir = _run_dir(video_id, output_dir)
     if not _step_place_images(video_id, run_dir, embed, force):
         raise typer.Exit(1)
 

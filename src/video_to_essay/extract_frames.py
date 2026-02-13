@@ -179,7 +179,7 @@ def classify_frames(
                             "text": (
                                 "Classify this video frame. Respond with ONLY valid JSON, no other text.\n\n"
                                 "{\n"
-                                '  "category": one of "slide", "chart", "code", "diagram", "key_moment", "talking_head", "transition", "other",\n'
+                                '  "category": one of "slide", "chart", "code", "diagram", "key_moment", "talking_head", "transition", "advertisement", "other",\n'
                                 '  "value": 1-5 (5 = essential visual information for an essay about this video),\n'
                                 '  "description": brief description of what the frame shows and how it relates to what is being discussed\n'
                                 "}"
@@ -215,6 +215,18 @@ def classify_frames(
     return results
 
 
+def _in_sponsor_range(
+    seconds: int,
+    sponsor_ranges: list[tuple[int, int]],
+    padding: int = 5,
+) -> bool:
+    """Check if a timestamp falls within any sponsor range (with padding)."""
+    for start, end in sponsor_ranges:
+        if (start - padding) <= seconds <= (end + padding):
+            return True
+    return False
+
+
 def extract_and_classify(
     video: Path,
     output_dir: Path,
@@ -223,13 +235,14 @@ def extract_and_classify(
     max_hamming: int = 8,
     min_value: int = 3,
     skip_categories: set[str] | None = None,
+    sponsor_ranges: list[tuple[int, int]] | None = None,
 ) -> list[dict[str, str | int]]:
     """Full frame extraction pipeline: sample -> dedup -> classify -> filter -> save.
 
     Returns the list of kept frame classifications.
     """
     if skip_categories is None:
-        skip_categories = {"talking_head", "transition"}
+        skip_categories = {"talking_head", "transition", "advertisement"}
 
     if not video.exists():
         raise FileNotFoundError(f"Video not found: {video}")
@@ -239,6 +252,17 @@ def extract_and_classify(
     print(f"Step 1: Sampling 1 frame every {interval}s...")
     frames = sample_frames(video, raw_dir, interval)
     print(f"  Extracted {len(frames)} frames")
+
+    # Step 1b: Drop frames in sponsor ranges
+    if sponsor_ranges:
+        before = len(frames)
+        frames = [
+            f for f in frames
+            if not _in_sponsor_range(frame_seconds(f, interval), sponsor_ranges)
+        ]
+        dropped = before - len(frames)
+        if dropped:
+            print(f"  Dropped {dropped} frames in sponsor ranges")
 
     # Step 2: Dedup
     print(f"Step 2: Deduplicating (max Hamming distance={max_hamming})...")

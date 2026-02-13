@@ -145,7 +145,10 @@ def transcript_to_essay(transcript: str, api_key: str | None = None) -> str:
         messages=[{
             "role": "user",
             "content": (
-                "Convert this YouTube video transcript into a well-written essay.\n\n"
+                "Convert this YouTube video transcript into a well-written essay. "
+                "Ignore any sponsor reads, advertisements, or promotional content "
+                "that may remain in the transcript. Focus only on the editorial/"
+                "substantive content.\n\n"
                 f"{transcript}"
             ),
         }],
