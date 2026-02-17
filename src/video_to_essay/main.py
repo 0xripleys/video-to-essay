@@ -27,6 +27,7 @@ from .place_images import (
     load_kept_frames,
     place_images_in_essay,
 )
+from .scorer import DIMENSION_NAMES, score_essay, score_one  # noqa: F401
 from .transcriber import download_video, extract_video_id, fetch_transcript, transcript_to_essay
 
 app = typer.Typer(help="Convert YouTube videos into illustrated essays.")
@@ -227,6 +228,64 @@ def _step_place_images(
         return False
 
 
+def _step_score(
+    video_id: str, run_dir: Path, model: str, score_dir: Path | None = None,
+) -> bool:
+    # Prefer cleaned transcript (same input the essay was generated from)
+    transcript_path = run_dir / "transcript_clean.txt"
+    if not transcript_path.exists():
+        transcript_path = run_dir / "transcript.txt"
+    essay_path = run_dir / "essay.md"
+
+    if not transcript_path.exists():
+        print(f"ERROR: no transcript found in {run_dir}")
+        return False
+    if not essay_path.exists():
+        print(f"ERROR: {essay_path} not found — run essay step first")
+        return False
+
+    try:
+        result = score_essay(
+            transcript=transcript_path.read_text(),
+            essay=essay_path.read_text(),
+            model=model,
+        )
+        _print_score_summary(result)
+        if score_dir:
+            _write_score_results(result, score_dir)
+        return True
+    except Exception as e:
+        print(f"ERROR in score step: {e}")
+        return False
+
+
+def _write_score_results(result: dict, score_dir: Path) -> None:
+    """Write each dimension result as a separate JSON file."""
+    score_dir.mkdir(parents=True, exist_ok=True)
+    for name, data in result["dimensions"].items():
+        output = {k: v for k, v in data.items() if k != "reasoning"}
+        path = score_dir / f"{name}.json"
+        path.write_text(json.dumps(output, indent=2))
+    print(f"Dimension results written to {score_dir}")
+
+
+def _print_score_summary(result: dict) -> None:
+    """Print a formatted score summary table to the terminal."""
+    dims = result["dimensions"]
+    print(f"\n{'─' * 40}")
+    print(f"  {'Dimension':<20} {'Score':>5}")
+    print(f"{'─' * 40}")
+    for name, data in dims.items():
+        print(f"  {name:<20} {data['score']:>5}/10")
+    print(f"{'─' * 40}")
+    print(f"  {'OVERALL':<20} {result['overall_score']:>5}/10")
+    print(f"{'─' * 40}")
+    print(f"\n  Model: {result['model']}")
+    if "summary" in result:
+        print(f"\n  {result['summary']}")
+    print()
+
+
 # ---------------------------------------------------------------------------
 # CLI subcommands
 # ---------------------------------------------------------------------------
@@ -385,6 +444,58 @@ def place_images_cmd(
     run_dir = _run_dir(video_id, output_dir)
     if not _step_place_images(video_id, run_dir, embed, force):
         raise typer.Exit(1)
+
+
+@app.command()
+def score(
+    video_id: str = typer.Argument(..., help="YouTube video ID (run dir must exist)"),
+    model: str = typer.Option("claude-sonnet-4-5-20250929", "--model", "-m", help="Model to use for judging"),
+    output_dir: Path | None = typer.Option(None, "--output-dir", "-o", help="Base output directory (default: runs/)"),
+    score_dir: Path | None = typer.Option(None, "--score-dir", "-s", help="Directory to write per-dimension JSON results"),
+) -> None:
+    """Score essay quality against the source transcript."""
+    run_dir = _run_dir(video_id, output_dir)
+    if not _step_score(video_id, run_dir, model, score_dir):
+        raise typer.Exit(1)
+
+
+@app.command("score-dimension")
+def score_dimension_cmd(
+    video_id: str = typer.Argument(..., help="YouTube video ID (run dir must exist)"),
+    dimension: str = typer.Argument(..., help="Dimension to score (faithfulness, proportionality, embellishment, hallucination, tone)"),
+    model: str = typer.Option("claude-sonnet-4-5-20250929", "--model", "-m", help="Model to use for judging"),
+    output_dir: Path | None = typer.Option(None, "--output-dir", "-o", help="Base output directory (default: runs/)"),
+    score_dir: Path | None = typer.Option(None, "--score-dir", "-s", help="Directory to write dimension JSON result"),
+) -> None:
+    """Score the essay on a single quality dimension."""
+    if dimension not in DIMENSION_NAMES:
+        print(f"ERROR: unknown dimension '{dimension}'. Choose from: {', '.join(DIMENSION_NAMES)}")
+        raise typer.Exit(1)
+
+    run_dir = _run_dir(video_id, output_dir)
+
+    transcript_path = run_dir / "transcript_clean.txt"
+    if not transcript_path.exists():
+        transcript_path = run_dir / "transcript.txt"
+    essay_path = run_dir / "essay.md"
+
+    if not transcript_path.exists():
+        print(f"ERROR: no transcript found in {run_dir}")
+        raise typer.Exit(1)
+    if not essay_path.exists():
+        print(f"ERROR: {essay_path} not found — run essay step first")
+        raise typer.Exit(1)
+
+    dim_result = score_one(transcript_path.read_text(), essay_path.read_text(), dimension, model)
+    print(f"\n  {dimension}: {dim_result['score']}/10")
+    print(f"  {dim_result['rationale']}\n")
+
+    if score_dir:
+        score_dir.mkdir(parents=True, exist_ok=True)
+        output = {k: v for k, v in dim_result.items() if k != "reasoning"}
+        path = score_dir / f"{dimension}.json"
+        path.write_text(json.dumps(output, indent=2))
+        print(f"Result written to {path}")
 
 
 if __name__ == "__main__":
