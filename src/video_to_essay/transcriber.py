@@ -127,28 +127,116 @@ def parse_json3(filepath: str) -> str:
     return "\n\n".join(paragraphs)
 
 
-def transcript_to_essay(transcript: str, api_key: str | None = None) -> str:
-    """Convert a transcript to an essay using Claude API.
+def extract_style_profile(transcript: str, api_key: str | None = None) -> str:
+    """Analyze transcript to extract a compact style profile.
 
-    Uses Strategy 1 (Simple Direct) which scored highest on coverage (8.5/10).
+    Sends the first ~8k chars of the transcript to Haiku and returns a
+    ~200-word profile describing formality, phrasing, humor, etc.
     """
     import anthropic
 
-    if api_key:
-        client = anthropic.Anthropic(api_key=api_key)
-    else:
-        client = anthropic.Anthropic()  # Uses ANTHROPIC_API_KEY env var
+    client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
+
+    sample = transcript[:8000]
+
+    msg = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=512,
+        messages=[{
+            "role": "user",
+            "content": (
+                "Analyze the speaking style of this YouTube transcript excerpt. "
+                "Return a compact style profile (~200 words) covering:\n"
+                "- Formality level (casual/semi-formal/formal)\n"
+                "- Characteristic phrases or verbal tics\n"
+                "- How the speaker addresses the audience\n"
+                "- Sentence patterns (short punchy, long flowing, fragments, etc.)\n"
+                "- Humor usage (sarcasm, self-deprecation, deadpan, none, etc.)\n"
+                "- Emotional tone (excited, calm, skeptical, enthusiastic, etc.)\n"
+                "- 3 short representative quotes that capture the voice\n\n"
+                "Be specific and concrete. This profile will be used to preserve "
+                "the speaker's voice when converting the transcript to written form.\n\n"
+                f"{sample}"
+            ),
+        }],
+    )
+
+    return msg.content[0].text
+
+
+def transcript_to_essay(transcript: str, api_key: str | None = None) -> str:
+    """Convert a transcript to an essay using Claude API.
+
+    Extracts a style profile from the transcript first, then uses it along
+    with explicit tone constraints and few-shot examples to preserve the
+    speaker's original voice instead of formalizing it.
+    """
+    import anthropic
+
+    client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
+
+    print("Extracting style profile from transcript...")
+    style_profile = extract_style_profile(transcript, api_key=api_key)
+    print("Style profile extracted. Generating essay...")
+
+    system_prompt = f"""\
+You are converting a YouTube video transcript into a readable essay. Your #1 job \
+is to preserve the speaker's original voice and tone. The essay should read like \
+the speaker wrote it themselves, not like an academic rewrote it.
+
+## Speaker's Style Profile
+{style_profile}
+
+## KEEP these elements from the original speech:
+- Contractions (don't, can't, it's, we're)
+- Casual/colloquial words (stuff, thing, kinda, pretty much, a lot, super)
+- Hedging language (I think, probably, sort of, maybe, I guess)
+- Direct audience address (you, you guys, we)
+- Humor, sarcasm, asides, and personality
+- Short punchy sentences and fragments when they match the speaker's rhythm
+- The speaker's actual word choices — do NOT swap them for fancier synonyms
+- First person perspective if the speaker uses it
+
+## NEVER do any of these:
+- Replace casual words with formal synonyms (e.g. "use" → "utilize", "big" → "substantial")
+- Add academic transition phrases ("Furthermore", "Moreover", "It is worth noting", "In conclusion")
+- Remove the speaker's personality, humor, or opinions
+- Impose a thesis-introduction-body-conclusion structure
+- Add hedging or qualifiers the speaker didn't use
+- Make sentences longer or more complex than the original
+- Add filler like "This is a testament to" or "It is important to recognize"
+
+## Structure guidance:
+- Use section headings that sound like the speaker (casual, not formal)
+- Paragraphs should be short — match the speaker's pacing
+- Clean up verbal filler (um, uh, like, you know) and repetition
+- Fix grammar only where it would be confusing in written form
+- Ignore any sponsor reads, advertisements, or promotional content"""
+
+    few_shot_examples = """\
+Here are examples of CORRECT vs INCORRECT conversion:
+
+### Example transcript snippet:
+"so basically what happened is the company just... they threw a ton of money at the problem and honestly it kinda worked? like nobody expected that"
+
+### CORRECT conversion (preserves voice):
+So basically what happened is the company threw a ton of money at the problem, and honestly, it kinda worked. Like, nobody expected that.
+
+### INCORRECT conversion (over-formalized — DO NOT do this):
+The company allocated substantial resources to address the challenge, and the strategy proved surprisingly effective. This outcome defied conventional expectations.
+
+---"""
 
     msg = client.messages.create(
         model="claude-sonnet-4-5-20250929",
         max_tokens=4096,
+        system=system_prompt,
         messages=[{
             "role": "user",
             "content": (
-                "Convert this YouTube video transcript into a well-written essay. "
-                "Ignore any sponsor reads, advertisements, or promotional content "
-                "that may remain in the transcript. Focus only on the editorial/"
-                "substantive content.\n\n"
+                f"{few_shot_examples}\n\n"
+                "Now convert this transcript into an essay. Preserve the speaker's "
+                "voice exactly as described in the style profile above.\n\n"
                 f"{transcript}"
             ),
         }],
