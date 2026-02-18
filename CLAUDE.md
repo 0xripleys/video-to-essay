@@ -56,7 +56,11 @@ URL -> transcript -> filter sponsors -> essay -> download video -> extract frame
 - **`transcriber.py`** — Transcript extraction + essay generation.
   - Tries `youtube-transcript-api` first, falls back to `yt-dlp`.
   - JSON3 parsing: yt-dlp's subtitle format has rolling duplicates marked with `aAppend`. `parse_json3()` filters these and groups into ~30s paragraphs with timestamps.
-  - Essay generation uses "Simple Direct" prompt strategy (scored 8.5/10 on information coverage vs. 4 alternatives).
+  - Essay generation uses a 3-technique prompt to preserve the speaker's voice:
+    1. `extract_style_profile()` — Haiku analyzes first ~8k chars for formality, phrases, humor, tone, etc.
+    2. System prompt with the style profile + explicit KEEP/NEVER tone constraints
+    3. Contrastive few-shot example (correct casual vs. incorrect formalized)
+  - This replaced the original "Simple Direct" strategy which scored well on coverage but 2/10 on tone.
 - **`filter_sponsors.py`** — Sponsor/ad detection and removal.
   - Uses Claude Haiku to identify sponsor reads/ad segments in the timestamped transcript.
   - Returns cleaned transcript (`transcript_clean.txt`) + timestamp ranges (`sponsor_segments.json`).
@@ -90,9 +94,9 @@ runs/<video_id>/
 
 - **YouTube blocks cloud IPs** — Pass `--cookies` with a Netscape-format cookies.txt. Cookies rotate quickly when used from different IPs.
 - **yt-dlp requires `--remote-components ejs:github`** for YouTube JS challenges, plus `deno` on PATH.
-- **Claude models** — Sonnet (`claude-sonnet-4-5-20250929`) is hardcoded in `transcriber.py`, `place_images.py`, and `scorer.py` for essay/image/scoring tasks. Haiku (`claude-haiku-4-5-20251001`) is used in `extract_frames.py` and `filter_sponsors.py`. Update all five files if changing models.
+- **Claude models** — Sonnet (`claude-sonnet-4-5-20250929`) is hardcoded in `transcriber.py`, `place_images.py`, and `scorer.py` for essay/image/scoring tasks. Haiku (`claude-haiku-4-5-20251001`) is used in `extract_frames.py`, `filter_sponsors.py`, and `transcriber.py:extract_style_profile()`. Update all five files if changing models.
 - **Essay step prefers cleaned transcript** — `_step_essay` in `main.py` reads `transcript_clean.txt` if it exists, falling back to `transcript.txt`.
-- **Known output issues** (see ISSUES.md): speaker attribution lost, over-formalized tone, AI embellishment beyond source material.
+- **Known output issues** (see ISSUES.md): speaker attribution lost. Tone and embellishment issues were largely resolved by the style-preserving prompt (tone: 2→9, embellishment: 5→10).
 
 ## Dependencies Beyond pip
 
