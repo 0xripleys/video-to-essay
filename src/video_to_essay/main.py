@@ -3,10 +3,10 @@ Video-to-Essay pipeline — single entry point for all steps.
 
 Usage:
     python main.py run <url>                    # Full pipeline
-    python main.py transcript <url>             # Extract transcript only
+    python main.py download <video_id>          # Download video
+    python main.py transcript <url>             # Download + extract transcript
     python main.py filter-sponsors <video_id>   # Filter sponsor/ad segments
     python main.py essay <video_id>             # Generate essay from transcript
-    python main.py download <video_id>          # Download video
     python main.py extract-frames <video_id>    # Extract + classify frames
     python main.py place-images <video_id>      # Place images + annotate
 """
@@ -32,7 +32,6 @@ from .scorer import DIMENSION_NAMES, score_essay, score_one  # noqa: F401
 from .transcriber import (
     download_video,
     extract_video_id,
-    fetch_transcript,
     fetch_video_metadata,
     transcript_to_essay,
 )
@@ -76,37 +75,12 @@ def _save_metadata(
 # ---------------------------------------------------------------------------
 
 def _step_transcript(
-    video_id: str,
     run_dir: Path,
-    cookies: str | None,
     force: bool,
     metadata: dict,
-    *,
-    no_diarize: bool = False,
 ) -> bool:
-    # Check for existing outputs
-    attributed = run_dir / "transcript_attributed.txt"
-    out = run_dir / "transcript.txt"
-    if not force and (attributed.exists() or out.exists()):
-        existing = attributed if attributed.exists() else out
-        print(f"Transcript exists, skipping ({existing})")
-        return True
-
-    # Try Deepgram first (unless --no-diarize)
-    if not no_diarize:
-        try:
-            if transcribe_with_deepgram(video_id, run_dir, metadata, cookies, force):
-                return True
-            print("No DEEPGRAM_API_KEY set, falling back to YouTube transcript...")
-        except Exception as e:
-            print(f"Deepgram transcription failed: {e}")
-            print("Falling back to YouTube transcript...")
-
-    # Fall back to YouTube transcript
     try:
-        text = fetch_transcript(video_id, cookies)
-        out.write_text(text)
-        print(f"Transcript saved ({len(text)} chars) -> {out}")
+        transcribe_with_deepgram(run_dir, metadata, force)
         return True
     except Exception as e:
         print(f"ERROR in transcript step: {e}")
@@ -114,10 +88,7 @@ def _step_transcript(
 
 
 def _step_filter_sponsors(video_id: str, run_dir: Path, force: bool) -> bool:
-    # Use attributed transcript if available, otherwise raw
-    transcript_path = run_dir / "transcript_attributed.txt"
-    if not transcript_path.exists():
-        transcript_path = run_dir / "transcript.txt"
+    transcript_path = run_dir / "transcript.txt"
     clean_path = run_dir / "transcript_clean.txt"
     segments_path = run_dir / "sponsor_segments.json"
     if clean_path.exists() and segments_path.exists() and not force:
@@ -144,12 +115,7 @@ def _step_filter_sponsors(video_id: str, run_dir: Path, force: bool) -> bool:
 
 
 def _step_essay(video_id: str, run_dir: Path, force: bool) -> bool:
-    # Prefer cleaned (sponsor-filtered) > attributed (Deepgram) > raw (YouTube)
     transcript_path = run_dir / "transcript_clean.txt"
-    if not transcript_path.exists():
-        transcript_path = run_dir / "transcript_attributed.txt"
-    if not transcript_path.exists():
-        transcript_path = run_dir / "transcript.txt"
     out = run_dir / "essay.md"
     if out.exists() and not force:
         print(f"Essay exists, skipping ({out})")
@@ -170,14 +136,13 @@ def _step_essay(video_id: str, run_dir: Path, force: bool) -> bool:
 def _step_download(
     video_id: str, run_dir: Path, cookies: str | None, force: bool
 ) -> bool:
-    out = run_dir / "video.mp4"
     # Check for any video file (yt-dlp may use different extensions)
     existing = sorted(run_dir.glob("video.*"))
     if existing and not force:
         print(f"Video exists, skipping ({existing[0]})")
         return True
     try:
-        actual = download_video(video_id, out, cookies)
+        actual = download_video(video_id, run_dir, cookies)
         print(f"Video saved -> {actual}")
         return True
     except Exception as e:
@@ -199,21 +164,23 @@ def _step_extract_frames(video_id: str, run_dir: Path, force: bool) -> bool:
         return False
     video_path = video_files[0]
 
-    # Load transcript for context if available
-    transcript_entries: list[tuple[int, str]] | None = None
+    # Load transcript for context
     transcript_path = run_dir / "transcript.txt"
-    if transcript_path.exists():
-        transcript_entries = parse_transcript(transcript_path.read_text())
-        print(f"Using transcript context ({len(transcript_entries)} lines)")
+    if not transcript_path.exists():
+        print(f"ERROR: {transcript_path} not found — run transcript step first")
+        return False
+    transcript_entries = parse_transcript(transcript_path.read_text())
+    print(f"Using transcript context ({len(transcript_entries)} lines)")
 
-    # Load sponsor ranges if available
-    sponsor_ranges: list[tuple[int, int]] | None = None
+    # Load sponsor ranges
     segments_path = run_dir / "sponsor_segments.json"
-    if segments_path.exists():
-        raw_ranges = json.loads(segments_path.read_text())
-        sponsor_ranges = [(s, e) for s, e in raw_ranges]
-        if sponsor_ranges:
-            print(f"Using {len(sponsor_ranges)} sponsor range(s) for frame filtering")
+    if not segments_path.exists():
+        print(f"ERROR: {segments_path} not found — run filter-sponsors step first")
+        return False
+    raw_ranges = json.loads(segments_path.read_text())
+    sponsor_ranges: list[tuple[int, int]] = [(s, e) for s, e in raw_ranges]
+    if sponsor_ranges:
+        print(f"Using {len(sponsor_ranges)} sponsor range(s) for frame filtering")
 
     try:
         extract_and_classify(
@@ -277,10 +244,7 @@ def _step_place_images(
 def _step_score(
     video_id: str, run_dir: Path, model: str, score_dir: Path | None = None,
 ) -> bool:
-    # Prefer cleaned transcript (same input the essay was generated from)
     transcript_path = run_dir / "transcript_clean.txt"
-    if not transcript_path.exists():
-        transcript_path = run_dir / "transcript.txt"
     essay_path = run_dir / "essay.md"
 
     if not transcript_path.exists():
@@ -343,67 +307,58 @@ def run(
     force: bool = typer.Option(False, "--force", help="Re-run all steps even if outputs exist"),
     embed: bool = typer.Option(True, "--embed/--no-embed", help="Embed images as base64 data URIs"),
     output_dir: Path | None = typer.Option(None, "--output-dir", "-o", help="Base output directory (default: runs/)"),
-    no_diarize: bool = typer.Option(False, "--no-diarize", help="Skip Deepgram, use YouTube transcript"),
 ) -> None:
-    """Run the full pipeline: transcript -> filter sponsors -> essay -> download -> frames -> place images."""
+    """Run the full pipeline: download -> transcript -> filter sponsors -> essay -> frames -> place images."""
     video_id = extract_video_id(url)
     run_dir = _run_dir(video_id, output_dir)
     metadata = _save_metadata(run_dir, url, video_id, cookies)
     print(f"Video ID: {video_id}")
     print(f"Run dir:  {run_dir}\n")
 
-    steps: list[tuple[str, bool]] = []
-
     print("=" * 60)
-    print("Step 1/7: Transcript")
-    print("=" * 60)
-    ok = _step_transcript(video_id, run_dir, cookies, force, metadata, no_diarize=no_diarize)
-    steps.append(("transcript", ok))
-    if not ok:
-        print("\nPipeline stopped at transcript step.")
-        raise typer.Exit(1)
-
-    print(f"\n{'=' * 60}")
-    print("Step 2/7: Filter sponsors")
-    print("=" * 60)
-    ok = _step_filter_sponsors(video_id, run_dir, force)
-    steps.append(("filter-sponsors", ok))
-    if not ok:
-        print("\nPipeline stopped at filter-sponsors step.")
-        raise typer.Exit(1)
-
-    print(f"\n{'=' * 60}")
-    print("Step 3/7: Essay")
-    print("=" * 60)
-    ok = _step_essay(video_id, run_dir, force)
-    steps.append(("essay", ok))
-    if not ok:
-        print("\nPipeline stopped at essay step.")
-        raise typer.Exit(1)
-
-    print(f"\n{'=' * 60}")
-    print("Step 4/7: Download video")
+    print("Step 0/6: Download video + metadata")
     print("=" * 60)
     ok = _step_download(video_id, run_dir, cookies, force)
-    steps.append(("download", ok))
     if not ok:
         print("\nPipeline stopped at download step.")
         raise typer.Exit(1)
 
     print(f"\n{'=' * 60}")
-    print("Step 5/7: Extract frames")
+    print("Step 1/6: Transcript (Deepgram)")
+    print("=" * 60)
+    ok = _step_transcript(run_dir, force, metadata)
+    if not ok:
+        print("\nPipeline stopped at transcript step.")
+        raise typer.Exit(1)
+
+    print(f"\n{'=' * 60}")
+    print("Step 2/6: Filter sponsors")
+    print("=" * 60)
+    ok = _step_filter_sponsors(video_id, run_dir, force)
+    if not ok:
+        print("\nPipeline stopped at filter-sponsors step.")
+        raise typer.Exit(1)
+
+    print(f"\n{'=' * 60}")
+    print("Step 3/6: Essay")
+    print("=" * 60)
+    ok = _step_essay(video_id, run_dir, force)
+    if not ok:
+        print("\nPipeline stopped at essay step.")
+        raise typer.Exit(1)
+
+    print(f"\n{'=' * 60}")
+    print("Step 4/6: Extract frames")
     print("=" * 60)
     ok = _step_extract_frames(video_id, run_dir, force)
-    steps.append(("extract-frames", ok))
     if not ok:
         print("\nPipeline stopped at extract-frames step.")
         raise typer.Exit(1)
 
     print(f"\n{'=' * 60}")
-    print("Step 6-7/7: Place images + annotate")
+    print("Step 5-6/6: Place images + annotate")
     print("=" * 60)
     ok = _step_place_images(video_id, run_dir, embed, force)
-    steps.append(("place-images", ok))
     if not ok:
         print("\nPipeline stopped at place-images step.")
         raise typer.Exit(1)
@@ -420,15 +375,16 @@ def transcript(
     cookies: str | None = typer.Option(None, "--cookies", help="Path to cookies.txt"),
     force: bool = typer.Option(False, "--force", help="Overwrite existing transcript"),
     output_dir: Path | None = typer.Option(None, "--output-dir", "-o", help="Base output directory (default: runs/)"),
-    no_diarize: bool = typer.Option(False, "--no-diarize", help="Skip Deepgram, use YouTube transcript"),
 ) -> None:
-    """Extract transcript only."""
+    """Download video and extract transcript via Deepgram."""
     video_id = extract_video_id(url)
     run_dir = _run_dir(video_id, output_dir)
     metadata = _save_metadata(run_dir, url, video_id, cookies)
     print(f"Video ID: {video_id}")
 
-    if not _step_transcript(video_id, run_dir, cookies, force, metadata, no_diarize=no_diarize):
+    if not _step_download(video_id, run_dir, cookies, force):
+        raise typer.Exit(1)
+    if not _step_transcript(run_dir, force, metadata):
         raise typer.Exit(1)
 
 
@@ -439,7 +395,7 @@ def diarize(
     force: bool = typer.Option(False, "--force", help="Re-run diarization"),
     output_dir: Path | None = typer.Option(None, "--output-dir", "-o", help="Base output directory (default: runs/)"),
 ) -> None:
-    """Run Deepgram diarization on an existing or new video."""
+    """Download video (if needed) and run Deepgram diarization."""
     run_dir = _run_dir(video_id, output_dir)
 
     # Load or create metadata
@@ -450,8 +406,13 @@ def diarize(
         url = f"https://www.youtube.com/watch?v={video_id}"
         metadata = _save_metadata(run_dir, url, video_id, cookies)
 
-    if not transcribe_with_deepgram(video_id, run_dir, metadata, cookies, force):
-        print("ERROR: DEEPGRAM_API_KEY not set. Set it in .env or environment.")
+    if not _step_download(video_id, run_dir, cookies, force=False):
+        raise typer.Exit(1)
+
+    try:
+        transcribe_with_deepgram(run_dir, metadata, force)
+    except RuntimeError as e:
+        print(f"ERROR: {e}")
         raise typer.Exit(1)
 
 
@@ -546,8 +507,6 @@ def score_dimension_cmd(
     run_dir = _run_dir(video_id, output_dir)
 
     transcript_path = run_dir / "transcript_clean.txt"
-    if not transcript_path.exists():
-        transcript_path = run_dir / "transcript.txt"
     essay_path = run_dir / "essay.md"
 
     if not transcript_path.exists():
