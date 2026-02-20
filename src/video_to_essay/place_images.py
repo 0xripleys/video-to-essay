@@ -7,9 +7,32 @@ Used as a library by main.py. Not intended to be run directly.
 import base64
 import json
 import re
+import time
 from pathlib import Path
 
 import anthropic
+
+
+def _stream_message(client: anthropic.Anthropic, **kwargs: object) -> str:
+    """Create a message with streaming to handle long requests.
+
+    Includes exponential backoff retry for rate limit errors.
+    """
+    max_retries = 5
+    for attempt in range(max_retries):
+        try:
+            chunks: list[str] = []
+            with client.messages.stream(**kwargs) as stream:
+                for text in stream.text_stream:
+                    chunks.append(text)
+            return "".join(chunks)
+        except anthropic.RateLimitError as e:
+            if attempt == max_retries - 1:
+                raise
+            wait = 2 ** attempt * 15  # 15, 30, 60, 120s
+            print(f"  Rate limited, waiting {wait}s (attempt {attempt + 1}/{max_retries})...")
+            time.sleep(wait)
+    return ""  # unreachable
 
 
 def load_kept_frames(frames_dir: Path) -> list[dict[str, str | int]]:
@@ -53,7 +76,9 @@ def place_images_in_essay(
 ) -> str:
     """Insert images into an essay at appropriate positions via LLM.
 
-    Returns the essay text with image markdown lines inserted.
+    Uses a JSON placement plan approach: the LLM returns a small JSON mapping
+    each image to a paragraph index, then insertion is done mechanically.
+    This avoids output token limits for long essays.
     """
     if not kept_frames:
         raise ValueError("No kept frames to place")
@@ -62,28 +87,58 @@ def place_images_in_essay(
 
     frame_list = format_frame_list(kept_frames, image_prefix)
 
+    # Number paragraphs so the LLM can reference them
+    paragraphs = essay_text.split("\n\n")
+    numbered = "\n\n".join(f"[P{i}] {p}" for i, p in enumerate(paragraphs))
+
     client = anthropic.Anthropic()
     msg = client.messages.create(
         model="claude-sonnet-4-5-20250929",
-        max_tokens=8192,
+        max_tokens=4096,
         messages=[
             {
                 "role": "user",
                 "content": (
-                    "Here is a markdown essay and a set of images extracted from the source video. "
-                    "Insert each image at the most appropriate position in the essay. Place each "
-                    "image on its own line between paragraphs where it is most relevant. "
-                    "Use markdown image syntax: ![description](path)\n\n"
-                    "Use every image exactly once. Do not modify the essay text — only add image "
-                    "lines. Return the full essay with images inserted.\n\n"
+                    "Here is a markdown essay with numbered paragraphs [P0], [P1], etc., "
+                    "and a set of images extracted from the source video.\n\n"
+                    "For each image, decide which paragraph it should be placed AFTER. "
+                    "Return ONLY a JSON array of placements, one per image, in this format:\n"
+                    '[{"image": "images/frame_0042.jpg", "after": 5, "alt": "short description"}]\n\n'
+                    "Rules:\n"
+                    "- Place each image after the paragraph where it is most contextually relevant\n"
+                    "- Use every image exactly once\n"
+                    "- The alt text should be a brief description of what the image shows\n"
+                    "- Return ONLY valid JSON, no other text\n\n"
                     f"Available images:\n{frame_list}\n\n"
-                    f"Essay:\n{essay_text}"
+                    f"Essay:\n{numbered}"
                 ),
             }
         ],
     )
 
-    result = msg.content[0].text
+    raw = msg.content[0].text.strip()
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+
+    placements: list[dict] = json.loads(raw)
+
+    # Group placements by paragraph index
+    insert_after: dict[int, list[str]] = {}
+    for p in placements:
+        idx = int(p["after"])
+        alt = p.get("alt", "")
+        img = p["image"]
+        insert_after.setdefault(idx, []).append(f"![{alt}]({img})")
+
+    # Build result by inserting image lines after designated paragraphs
+    result_parts: list[str] = []
+    for i, para in enumerate(paragraphs):
+        result_parts.append(para)
+        if i in insert_after:
+            for img_line in insert_after[i]:
+                result_parts.append(img_line)
+
+    result = "\n\n".join(result_parts)
     _print_image_stats(result, kept_frames)
     return result
 
@@ -122,7 +177,8 @@ def annotate_essay(
 ) -> str:
     """Add figure numbers, captions, and weave figure references into prose.
 
-    Returns the annotated essay text.
+    Uses a JSON approach: the LLM returns figure reference insertions as a list
+    of {figure, text_to_find, replacement} objects, then we apply them mechanically.
     """
     # Step 1: Mechanically number figures and add captions
     numbered_essay, figures = _number_figures(essay_text)
@@ -132,7 +188,7 @@ def annotate_essay(
 
     print(f"Numbered {len(figures)} figures. Adding references via LLM in batches of {batch_size}...")
 
-    # Step 2: LLM passes to insert figure references, batch_size figures at a time
+    # Step 2: LLM returns insertion instructions as JSON
     client = anthropic.Anthropic()
     result = numbered_essay
 
@@ -146,24 +202,23 @@ def annotate_essay(
 
         msg = client.messages.create(
             model="claude-sonnet-4-5-20250929",
-            max_tokens=16384,
+            max_tokens=4096,
             messages=[
                 {
                     "role": "user",
                     "content": (
-                        "Below is a markdown essay with numbered figures (images with captions like "
-                        "*Figure N: description*). Your task is to add natural references to ONLY "
-                        "the following figures in the essay prose.\n\n"
+                        "Below is a markdown essay with numbered figures. Add natural references "
+                        "to ONLY the listed figures by finding a relevant sentence near each figure "
+                        "and inserting a short reference.\n\n"
+                        "Return ONLY a JSON array where each entry specifies a text replacement:\n"
+                        '[{"figure": 1, "find": "exact sentence or phrase from the essay", '
+                        '"replace": "same text with figure reference naturally inserted"}]\n\n'
                         "Rules:\n"
-                        "- Add references like '(see Figure 1)', 'as shown in Figure 3', "
-                        "'Figure 2 illustrates', etc. in the most relevant nearby paragraph\n"
-                        "- ONLY add references for the figures listed below — do not touch "
-                        "any existing figure references already in the text\n"
-                        "- Every listed figure must be referenced at least once in the prose\n"
-                        "- Do NOT move, remove, or modify the image lines or figure captions\n"
-                        "- Do NOT rewrite the prose — only insert short figure references into "
-                        "existing sentences\n"
-                        "- Return the complete essay\n\n"
+                        '- References should read naturally: "(see Figure 1)", "as shown in Figure 3", etc.\n'
+                        "- The 'find' field must be an EXACT substring from the essay (10-80 chars)\n"
+                        "- The 'replace' field should be the same text with only a figure reference added\n"
+                        "- Every listed figure must have at least one reference\n"
+                        "- Return ONLY valid JSON\n\n"
                         f"Figures to reference:\n{figure_summary}\n\n"
                         f"Essay:\n{result}"
                     ),
@@ -171,7 +226,19 @@ def annotate_essay(
             ],
         )
 
-        result = msg.content[0].text
+        raw = msg.content[0].text.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+
+        try:
+            replacements: list[dict] = json.loads(raw)
+            for r in replacements:
+                find_text = r.get("find", "")
+                replace_text = r.get("replace", "")
+                if find_text and replace_text and find_text in result:
+                    result = result.replace(find_text, replace_text, 1)
+        except (json.JSONDecodeError, KeyError) as e:
+            print(f"  WARNING: Could not parse annotation batch: {e}")
 
     # Report figure reference coverage
     for num, alt, _src in figures:

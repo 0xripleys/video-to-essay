@@ -19,6 +19,7 @@ import typer
 
 DEFAULT_RUNS_DIR = Path("runs")
 
+from .diarize import transcribe_with_deepgram
 from .extract_frames import extract_and_classify, parse_transcript
 from .filter_sponsors import filter_sponsors
 from .place_images import (
@@ -28,7 +29,13 @@ from .place_images import (
     place_images_in_essay,
 )
 from .scorer import DIMENSION_NAMES, score_essay, score_one  # noqa: F401
-from .transcriber import download_video, extract_video_id, fetch_transcript, transcript_to_essay
+from .transcriber import (
+    download_video,
+    extract_video_id,
+    fetch_transcript,
+    fetch_video_metadata,
+    transcript_to_essay,
+)
 
 app = typer.Typer(help="Convert YouTube videos into illustrated essays.")
 
@@ -41,14 +48,27 @@ def _run_dir(video_id: str, output_dir: Path | None = None) -> Path:
     return d
 
 
-def _save_metadata(run_dir: Path, url: str, video_id: str) -> None:
+def _save_metadata(
+    run_dir: Path, url: str, video_id: str, cookies: str | None = None
+) -> dict:
+    """Save and return metadata. Enriches with YouTube metadata via yt-dlp."""
     meta_path = run_dir / "metadata.json"
-    if not meta_path.exists():
-        meta_path.write_text(json.dumps({
-            "url": url,
-            "video_id": video_id,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }, indent=2))
+    if meta_path.exists():
+        return json.loads(meta_path.read_text())
+
+    meta: dict = {
+        "url": url,
+        "video_id": video_id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        yt_meta = fetch_video_metadata(video_id, cookies)
+        meta.update(yt_meta)
+    except Exception as e:
+        print(f"WARNING: Could not fetch video metadata: {e}")
+
+    meta_path.write_text(json.dumps(meta, indent=2))
+    return meta
 
 
 # ---------------------------------------------------------------------------
@@ -56,12 +76,33 @@ def _save_metadata(run_dir: Path, url: str, video_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 def _step_transcript(
-    video_id: str, run_dir: Path, cookies: str | None, force: bool
+    video_id: str,
+    run_dir: Path,
+    cookies: str | None,
+    force: bool,
+    metadata: dict,
+    *,
+    no_diarize: bool = False,
 ) -> bool:
+    # Check for existing outputs
+    attributed = run_dir / "transcript_attributed.txt"
     out = run_dir / "transcript.txt"
-    if out.exists() and not force:
-        print(f"Transcript exists, skipping ({out})")
+    if not force and (attributed.exists() or out.exists()):
+        existing = attributed if attributed.exists() else out
+        print(f"Transcript exists, skipping ({existing})")
         return True
+
+    # Try Deepgram first (unless --no-diarize)
+    if not no_diarize:
+        try:
+            if transcribe_with_deepgram(video_id, run_dir, metadata, cookies, force):
+                return True
+            print("No DEEPGRAM_API_KEY set, falling back to YouTube transcript...")
+        except Exception as e:
+            print(f"Deepgram transcription failed: {e}")
+            print("Falling back to YouTube transcript...")
+
+    # Fall back to YouTube transcript
     try:
         text = fetch_transcript(video_id, cookies)
         out.write_text(text)
@@ -73,14 +114,17 @@ def _step_transcript(
 
 
 def _step_filter_sponsors(video_id: str, run_dir: Path, force: bool) -> bool:
-    transcript_path = run_dir / "transcript.txt"
+    # Use attributed transcript if available, otherwise raw
+    transcript_path = run_dir / "transcript_attributed.txt"
+    if not transcript_path.exists():
+        transcript_path = run_dir / "transcript.txt"
     clean_path = run_dir / "transcript_clean.txt"
     segments_path = run_dir / "sponsor_segments.json"
     if clean_path.exists() and segments_path.exists() and not force:
         print(f"Filtered transcript exists, skipping ({clean_path})")
         return True
     if not transcript_path.exists():
-        print(f"ERROR: {transcript_path} not found — run transcript step first")
+        print(f"ERROR: no transcript found — run transcript step first")
         return False
     try:
         cleaned, sponsor_ranges = filter_sponsors(transcript_path.read_text())
@@ -100,8 +144,10 @@ def _step_filter_sponsors(video_id: str, run_dir: Path, force: bool) -> bool:
 
 
 def _step_essay(video_id: str, run_dir: Path, force: bool) -> bool:
-    # Prefer cleaned transcript (sponsor-filtered), fall back to raw
+    # Prefer cleaned (sponsor-filtered) > attributed (Deepgram) > raw (YouTube)
     transcript_path = run_dir / "transcript_clean.txt"
+    if not transcript_path.exists():
+        transcript_path = run_dir / "transcript_attributed.txt"
     if not transcript_path.exists():
         transcript_path = run_dir / "transcript.txt"
     out = run_dir / "essay.md"
@@ -297,11 +343,12 @@ def run(
     force: bool = typer.Option(False, "--force", help="Re-run all steps even if outputs exist"),
     embed: bool = typer.Option(True, "--embed/--no-embed", help="Embed images as base64 data URIs"),
     output_dir: Path | None = typer.Option(None, "--output-dir", "-o", help="Base output directory (default: runs/)"),
+    no_diarize: bool = typer.Option(False, "--no-diarize", help="Skip Deepgram, use YouTube transcript"),
 ) -> None:
     """Run the full pipeline: transcript -> filter sponsors -> essay -> download -> frames -> place images."""
     video_id = extract_video_id(url)
     run_dir = _run_dir(video_id, output_dir)
-    _save_metadata(run_dir, url, video_id)
+    metadata = _save_metadata(run_dir, url, video_id, cookies)
     print(f"Video ID: {video_id}")
     print(f"Run dir:  {run_dir}\n")
 
@@ -310,7 +357,7 @@ def run(
     print("=" * 60)
     print("Step 1/7: Transcript")
     print("=" * 60)
-    ok = _step_transcript(video_id, run_dir, cookies, force)
+    ok = _step_transcript(video_id, run_dir, cookies, force, metadata, no_diarize=no_diarize)
     steps.append(("transcript", ok))
     if not ok:
         print("\nPipeline stopped at transcript step.")
@@ -373,14 +420,38 @@ def transcript(
     cookies: str | None = typer.Option(None, "--cookies", help="Path to cookies.txt"),
     force: bool = typer.Option(False, "--force", help="Overwrite existing transcript"),
     output_dir: Path | None = typer.Option(None, "--output-dir", "-o", help="Base output directory (default: runs/)"),
+    no_diarize: bool = typer.Option(False, "--no-diarize", help="Skip Deepgram, use YouTube transcript"),
 ) -> None:
     """Extract transcript only."""
     video_id = extract_video_id(url)
     run_dir = _run_dir(video_id, output_dir)
-    _save_metadata(run_dir, url, video_id)
+    metadata = _save_metadata(run_dir, url, video_id, cookies)
     print(f"Video ID: {video_id}")
 
-    if not _step_transcript(video_id, run_dir, cookies, force):
+    if not _step_transcript(video_id, run_dir, cookies, force, metadata, no_diarize=no_diarize):
+        raise typer.Exit(1)
+
+
+@app.command()
+def diarize(
+    video_id: str = typer.Argument(..., help="YouTube video ID (run dir must exist)"),
+    cookies: str | None = typer.Option(None, "--cookies", help="Path to cookies.txt"),
+    force: bool = typer.Option(False, "--force", help="Re-run diarization"),
+    output_dir: Path | None = typer.Option(None, "--output-dir", "-o", help="Base output directory (default: runs/)"),
+) -> None:
+    """Run Deepgram diarization on an existing or new video."""
+    run_dir = _run_dir(video_id, output_dir)
+
+    # Load or create metadata
+    meta_path = run_dir / "metadata.json"
+    if meta_path.exists():
+        metadata = json.loads(meta_path.read_text())
+    else:
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        metadata = _save_metadata(run_dir, url, video_id, cookies)
+
+    if not transcribe_with_deepgram(video_id, run_dir, metadata, cookies, force):
+        print("ERROR: DEEPGRAM_API_KEY not set. Set it in .env or environment.")
         raise typer.Exit(1)
 
 

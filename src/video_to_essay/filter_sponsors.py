@@ -74,7 +74,7 @@ def _strip_segments(transcript: str, ranges: list[tuple[int, int]]) -> str:
     kept_paragraphs: list[str] = []
     for paragraph in transcript.split("\n\n"):
         # Extract timestamp from paragraph start
-        match = re.match(r"\[(\d+):(\d{2})\]", paragraph)
+        match = re.match(r"(?:\*\*[^*]+\*\*\s*)?\[(\d+):(\d{2})\]", paragraph)
         if not match:
             kept_paragraphs.append(paragraph)
             continue
