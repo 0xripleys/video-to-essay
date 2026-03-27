@@ -621,10 +621,10 @@ def serve(
 
     from .api import app as fastapi_app
     from .api import mount_static
-    from .worker import start_worker_thread
+    from .worker import start_worker_threads
 
     mount_static()
-    start_worker_thread()
+    start_worker_threads()
     print(f"Starting server on {host}:{port}")
     uvicorn.run(fastapi_app, host=host, port=port)
 
