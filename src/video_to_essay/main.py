@@ -611,5 +611,23 @@ def score_dimension_cmd(
         print(f"Result written to {path}")
 
 
+@app.command()
+def serve(
+    host: str = typer.Option("0.0.0.0", "--host", help="Host to bind to"),
+    port: int = typer.Option(8000, "--port", help="Port to bind to"),
+) -> None:
+    """Start the web server and background worker."""
+    import uvicorn
+
+    from .api import app as fastapi_app
+    from .api import mount_static
+    from .worker import start_worker_thread
+
+    mount_static()
+    start_worker_thread()
+    print(f"Starting server on {host}:{port}")
+    uvicorn.run(fastapi_app, host=host, port=port)
+
+
 if __name__ == "__main__":
     app()
