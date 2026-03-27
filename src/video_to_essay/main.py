@@ -12,6 +12,7 @@ Usage:
 """
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -39,6 +40,36 @@ from .transcriber import (
 app = typer.Typer(help="Convert YouTube videos into illustrated essays.")
 
 
+def _load_env() -> None:
+    """Load .env file from project root if it exists."""
+    env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, _, value = line.partition("=")
+                os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
+
+
+@app.callback()
+def _startup() -> None:
+    """Load environment variables before any subcommand runs."""
+    _load_env()
+
+# ---------------------------------------------------------------------------
+# Step directory layout
+# ---------------------------------------------------------------------------
+
+STEP_DIRS: dict[str, str] = {
+    "download": "00_download",
+    "transcript": "01_transcript",
+    "filter_sponsors": "02_filter_sponsors",
+    "essay": "03_essay",
+    "frames": "04_frames",
+    "place_images": "05_place_images",
+}
+
+
 def _run_dir(video_id: str, output_dir: Path | None = None) -> Path:
     """Return and create the run directory for a video."""
     base = output_dir if output_dir else DEFAULT_RUNS_DIR
@@ -47,11 +78,19 @@ def _run_dir(video_id: str, output_dir: Path | None = None) -> Path:
     return d
 
 
+def _step_dir(run_dir: Path, step: str) -> Path:
+    """Return and create the subdirectory for a pipeline step."""
+    d = run_dir / STEP_DIRS[step]
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def _save_metadata(
     run_dir: Path, url: str, video_id: str, cookies: str | None = None
 ) -> dict:
     """Save and return metadata. Enriches with YouTube metadata via yt-dlp."""
-    meta_path = run_dir / "metadata.json"
+    dl_dir = _step_dir(run_dir, "download")
+    meta_path = dl_dir / "metadata.json"
     if meta_path.exists():
         return json.loads(meta_path.read_text())
 
@@ -74,13 +113,40 @@ def _save_metadata(
 # Step functions — each returns True on success
 # ---------------------------------------------------------------------------
 
+def _step_download(
+    video_id: str, run_dir: Path, cookies: str | None, force: bool
+) -> bool:
+    dl_dir = _step_dir(run_dir, "download")
+    existing = sorted(dl_dir.glob("video.*"))
+    if existing and not force:
+        print(f"Video exists, skipping ({existing[0]})")
+        return True
+    try:
+        actual = download_video(video_id, dl_dir, cookies)
+        print(f"Video saved -> {actual}")
+        return True
+    except Exception as e:
+        print(f"ERROR in download step: {e}")
+        return False
+
+
 def _step_transcript(
     run_dir: Path,
     force: bool,
     metadata: dict,
 ) -> bool:
+    dl_dir = _step_dir(run_dir, "download")
+    transcript_dir = _step_dir(run_dir, "transcript")
+
+    # Find video in download dir
+    video_files = sorted(dl_dir.glob("video.*"))
+    if not video_files:
+        print(f"ERROR: No video file in {dl_dir} — run download step first")
+        return False
+    video_path = video_files[0]
+
     try:
-        transcribe_with_deepgram(run_dir, metadata, force)
+        transcribe_with_deepgram(video_path, transcript_dir, metadata, force)
         return True
     except Exception as e:
         print(f"ERROR in transcript step: {e}")
@@ -88,9 +154,13 @@ def _step_transcript(
 
 
 def _step_filter_sponsors(video_id: str, run_dir: Path, force: bool) -> bool:
-    transcript_path = run_dir / "transcript.txt"
-    clean_path = run_dir / "transcript_clean.txt"
-    segments_path = run_dir / "sponsor_segments.json"
+    transcript_dir = _step_dir(run_dir, "transcript")
+    filter_dir = _step_dir(run_dir, "filter_sponsors")
+
+    transcript_path = transcript_dir / "transcript.txt"
+    clean_path = filter_dir / "transcript_clean.txt"
+    segments_path = filter_dir / "sponsor_segments.json"
+
     if clean_path.exists() and segments_path.exists() and not force:
         print(f"Filtered transcript exists, skipping ({clean_path})")
         return True
@@ -115,13 +185,17 @@ def _step_filter_sponsors(video_id: str, run_dir: Path, force: bool) -> bool:
 
 
 def _step_essay(video_id: str, run_dir: Path, force: bool) -> bool:
-    transcript_path = run_dir / "transcript_clean.txt"
-    out = run_dir / "essay.md"
+    filter_dir = _step_dir(run_dir, "filter_sponsors")
+    essay_dir = _step_dir(run_dir, "essay")
+
+    transcript_path = filter_dir / "transcript_clean.txt"
+    out = essay_dir / "essay.md"
+
     if out.exists() and not force:
         print(f"Essay exists, skipping ({out})")
         return True
     if not transcript_path.exists():
-        print(f"ERROR: no transcript found — run transcript step first")
+        print(f"ERROR: no transcript found — run filter-sponsors step first")
         return False
     try:
         text = transcript_to_essay(transcript_path.read_text())
@@ -133,39 +207,26 @@ def _step_essay(video_id: str, run_dir: Path, force: bool) -> bool:
         return False
 
 
-def _step_download(
-    video_id: str, run_dir: Path, cookies: str | None, force: bool
-) -> bool:
-    # Check for any video file (yt-dlp may use different extensions)
-    existing = sorted(run_dir.glob("video.*"))
-    if existing and not force:
-        print(f"Video exists, skipping ({existing[0]})")
-        return True
-    try:
-        actual = download_video(video_id, run_dir, cookies)
-        print(f"Video saved -> {actual}")
-        return True
-    except Exception as e:
-        print(f"ERROR in download step: {e}")
-        return False
-
-
 def _step_extract_frames(video_id: str, run_dir: Path, force: bool) -> bool:
-    frames_dir = run_dir / "frames"
+    dl_dir = _step_dir(run_dir, "download")
+    transcript_dir = _step_dir(run_dir, "transcript")
+    filter_dir = _step_dir(run_dir, "filter_sponsors")
+    frames_dir = _step_dir(run_dir, "frames")
+
     kept_dir = frames_dir / "kept"
     if kept_dir.exists() and any(kept_dir.iterdir()) and not force:
         print(f"Frames exist, skipping ({kept_dir})")
         return True
 
-    # Find the video file (may be .mp4, .webm, etc.)
-    video_files = sorted(run_dir.glob("video.*"))
+    # Find the video file
+    video_files = sorted(dl_dir.glob("video.*"))
     if not video_files:
-        print(f"ERROR: No video file in {run_dir} — run download step first")
+        print(f"ERROR: No video file in {dl_dir} — run download step first")
         return False
     video_path = video_files[0]
 
     # Load transcript for context
-    transcript_path = run_dir / "transcript.txt"
+    transcript_path = transcript_dir / "transcript.txt"
     if not transcript_path.exists():
         print(f"ERROR: {transcript_path} not found — run transcript step first")
         return False
@@ -173,7 +234,7 @@ def _step_extract_frames(video_id: str, run_dir: Path, force: bool) -> bool:
     print(f"Using transcript context ({len(transcript_entries)} lines)")
 
     # Load sponsor ranges
-    segments_path = run_dir / "sponsor_segments.json"
+    segments_path = filter_dir / "sponsor_segments.json"
     if not segments_path.exists():
         print(f"ERROR: {segments_path} not found — run filter-sponsors step first")
         return False
@@ -198,10 +259,18 @@ def _step_extract_frames(video_id: str, run_dir: Path, force: bool) -> bool:
 def _step_place_images(
     video_id: str, run_dir: Path, embed: bool, force: bool
 ) -> bool:
-    essay_path = run_dir / "essay.md"
-    frames_dir = run_dir / "frames"
-    out_placed = run_dir / "essay_with_images.md"
-    out_final = run_dir / "essay_final.md"
+    essay_dir = _step_dir(run_dir, "essay")
+    frames_dir = _step_dir(run_dir, "frames")
+    place_dir = _step_dir(run_dir, "place_images")
+
+    essay_path = essay_dir / "essay.md"
+    kept_dir = frames_dir / "kept"
+    classifications_path = frames_dir / "classifications.json"
+    out_placed = place_dir / "essay_with_images.md"
+    out_final = place_dir / "essay_final.md"
+
+    # Relative path from 05_place_images/ to 04_frames/kept/
+    image_prefix = "../04_frames/kept/"
 
     if out_final.exists() and not force:
         print(f"Final essay exists, skipping ({out_final})")
@@ -209,13 +278,13 @@ def _step_place_images(
     if not essay_path.exists():
         print(f"ERROR: {essay_path} not found — run essay step first")
         return False
-    if not (frames_dir / "kept").exists():
-        print(f"ERROR: {frames_dir / 'kept'} not found — run extract-frames step first")
+    if not kept_dir.exists():
+        print(f"ERROR: {kept_dir} not found — run extract-frames step first")
         return False
 
     try:
         essay_text = essay_path.read_text()
-        kept = load_kept_frames(frames_dir)
+        kept = load_kept_frames(classifications_path, kept_dir)
 
         if not kept:
             print("WARNING: No kept frames found. Copying essay as final.")
@@ -224,14 +293,14 @@ def _step_place_images(
             return True
 
         # Place images
-        with_images = place_images_in_essay(essay_text, kept)
+        with_images = place_images_in_essay(essay_text, kept, image_prefix)
         out_placed.write_text(with_images)
         print(f"Essay with images -> {out_placed}")
 
         # Annotate figures
         annotated = annotate_essay(with_images)
         if embed:
-            annotated = embed_images(annotated, frames_dir)
+            annotated = embed_images(annotated, kept_dir, image_prefix)
             print("Embedded images as base64 data URIs")
         out_final.write_text(annotated)
         print(f"Final essay -> {out_final}")
@@ -244,11 +313,14 @@ def _step_place_images(
 def _step_score(
     video_id: str, run_dir: Path, model: str, score_dir: Path | None = None,
 ) -> bool:
-    transcript_path = run_dir / "transcript_clean.txt"
-    essay_path = run_dir / "essay.md"
+    filter_dir = _step_dir(run_dir, "filter_sponsors")
+    essay_dir = _step_dir(run_dir, "essay")
+
+    transcript_path = filter_dir / "transcript_clean.txt"
+    essay_path = essay_dir / "essay.md"
 
     if not transcript_path.exists():
-        print(f"ERROR: no transcript found in {run_dir}")
+        print(f"ERROR: no transcript found in {filter_dir}")
         return False
     if not essay_path.exists():
         print(f"ERROR: {essay_path} not found — run essay step first")
@@ -366,7 +438,8 @@ def run(
     print(f"\n{'=' * 60}")
     print("Done!")
     print("=" * 60)
-    print(f"Final essay: {run_dir / 'essay_final.md'}")
+    final = run_dir / STEP_DIRS["place_images"] / "essay_final.md"
+    print(f"Final essay: {final}")
 
 
 @app.command()
@@ -397,9 +470,11 @@ def diarize(
 ) -> None:
     """Download video (if needed) and run Deepgram diarization."""
     run_dir = _run_dir(video_id, output_dir)
+    dl_dir = _step_dir(run_dir, "download")
+    transcript_dir = _step_dir(run_dir, "transcript")
 
     # Load or create metadata
-    meta_path = run_dir / "metadata.json"
+    meta_path = dl_dir / "metadata.json"
     if meta_path.exists():
         metadata = json.loads(meta_path.read_text())
     else:
@@ -409,8 +484,14 @@ def diarize(
     if not _step_download(video_id, run_dir, cookies, force=False):
         raise typer.Exit(1)
 
+    # Find video in download dir
+    video_files = sorted(dl_dir.glob("video.*"))
+    if not video_files:
+        print(f"ERROR: No video file in {dl_dir}")
+        raise typer.Exit(1)
+
     try:
-        transcribe_with_deepgram(run_dir, metadata, force)
+        transcribe_with_deepgram(video_files[0], transcript_dir, metadata, force)
     except RuntimeError as e:
         print(f"ERROR: {e}")
         raise typer.Exit(1)
@@ -505,12 +586,14 @@ def score_dimension_cmd(
         raise typer.Exit(1)
 
     run_dir = _run_dir(video_id, output_dir)
+    filter_dir = _step_dir(run_dir, "filter_sponsors")
+    essay_dir = _step_dir(run_dir, "essay")
 
-    transcript_path = run_dir / "transcript_clean.txt"
-    essay_path = run_dir / "essay.md"
+    transcript_path = filter_dir / "transcript_clean.txt"
+    essay_path = essay_dir / "essay.md"
 
     if not transcript_path.exists():
-        print(f"ERROR: no transcript found in {run_dir}")
+        print(f"ERROR: no transcript found in {filter_dir}")
         raise typer.Exit(1)
     if not essay_path.exists():
         print(f"ERROR: {essay_path} not found — run essay step first")

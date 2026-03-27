@@ -24,13 +24,43 @@ from PIL import Image
 
 
 def parse_transcript(transcript: str) -> list[tuple[int, str]]:
-    """Parse timestamped transcript into list of (seconds, text) tuples."""
+    """Parse timestamped transcript into list of (seconds, text) tuples.
+
+    Handles both single-speaker format:
+        [MM:SS] Text here
+    And multi-speaker format:
+        **Speaker Name** [MM:SS]
+        Text here
+    """
     entries: list[tuple[int, str]] = []
-    for line in transcript.strip().splitlines():
-        match = re.match(r"\[(\d{2}):(\d{2})\]\s*(.*)", line)
-        if match:
-            seconds = int(match.group(1)) * 60 + int(match.group(2))
-            entries.append((seconds, match.group(3)))
+    lines = transcript.strip().splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        # Single-speaker: [MM:SS] Text
+        single = re.match(r"\[(\d{2}):(\d{2})\]\s*(.*)", line)
+        if single:
+            seconds = int(single.group(1)) * 60 + int(single.group(2))
+            entries.append((seconds, single.group(3)))
+            i += 1
+            continue
+        # Multi-speaker: **Name** [MM:SS] followed by text on next line
+        multi = re.match(r"\*\*.*?\*\*\s*\[(\d{2}):(\d{2})\]", line)
+        if multi:
+            seconds = int(multi.group(1)) * 60 + int(multi.group(2))
+            # Collect subsequent non-empty, non-header lines as the text
+            text_lines: list[str] = []
+            i += 1
+            while i < len(lines):
+                next_line = lines[i]
+                if not next_line.strip() or re.match(r"\*\*.*?\*\*\s*\[", next_line):
+                    break
+                text_lines.append(next_line.strip())
+                i += 1
+            if text_lines:
+                entries.append((seconds, " ".join(text_lines)))
+            continue
+        i += 1
     return entries
 
 

@@ -65,7 +65,7 @@ extract audio (ffmpeg -vn) -> Deepgram API (nova-3, diarize) -> speaker name map
   - `run_diarization()` — POST to Deepgram Nova-3 API with `diarize=true&utterances=true&smart_format=true`. Uses `httpx`.
   - `map_speaker_names()` — Only called when >1 speaker. Sends first ~80 utterances + video metadata to Haiku to map speaker IDs to real names.
   - `format_transcript()` — Groups consecutive utterances by same speaker. Multi-speaker: `**Speaker Name** [MM:SS]` format. Single-speaker: `[MM:SS] Text` format.
-  - `transcribe_with_deepgram()` — Top-level orchestrator. Raises `RuntimeError` if `DEEPGRAM_API_KEY` missing. Always writes to `transcript.txt`.
+  - `transcribe_with_deepgram(video_path, output_dir, metadata, force)` — Top-level orchestrator. Takes explicit video path and output directory. Raises `RuntimeError` if `DEEPGRAM_API_KEY` missing. Always writes to `output_dir/transcript.txt`.
 - **`transcriber.py`** — Essay generation and video download.
   - `fetch_video_metadata()` — yt-dlp `--dump-json` wrapper for title/description/channel.
   - `download_video()` — yt-dlp video download.
@@ -97,17 +97,27 @@ extract audio (ffmpeg -vn) -> Deepgram API (nova-3, diarize) -> speaker name map
 
 ```
 runs/<video_id>/
-  metadata.json                     # URL, video_id, title, description, channel, etc.
-  video.mp4                         # Downloaded video (may be .webm)
-  audio.mp3                         # Extracted from video via ffmpeg
-  diarization.json                  # Deepgram utterances with speaker IDs
-  deepgram_response.json            # Full Deepgram API response
-  speaker_map.json                  # Speaker ID → name (multi-speaker only)
-  transcript.txt                    # Deepgram transcript (with **Speaker** markers if multi-speaker)
-  transcript_clean.txt, sponsor_segments.json
-  essay.md
-  frames/ { raw/, kept/, classifications.json }
-  essay_with_images.md, essay_final.md
+  00_download/
+    metadata.json                   # URL, video_id, title, description, channel, etc.
+    video.mp4                       # Downloaded video (may be .webm)
+  01_transcript/
+    audio.mp3                       # Extracted from video via ffmpeg
+    diarization.json                # Deepgram utterances with speaker IDs
+    deepgram_response.json          # Full Deepgram API response
+    speaker_map.json                # Speaker ID → name (multi-speaker only)
+    transcript.txt                  # Deepgram transcript (with **Speaker** markers if multi-speaker)
+  02_filter_sponsors/
+    transcript_clean.txt            # Transcript with sponsor segments removed
+    sponsor_segments.json           # Detected sponsor time ranges
+  03_essay/
+    essay.md                        # Generated essay
+  04_frames/
+    raw/                            # All sampled frames
+    kept/                           # Frames kept after dedup + classification
+    classifications.json            # Frame classification results
+  05_place_images/
+    essay_with_images.md            # Essay with images placed
+    essay_final.md                  # Final essay with figure annotations (+ base64 if embedded)
 ```
 
 ## Key Technical Details

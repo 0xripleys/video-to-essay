@@ -17,17 +17,6 @@ import httpx
 DEEPGRAM_API_URL = "https://api.deepgram.com/v1/listen"
 
 
-def _load_env() -> None:
-    """Load .env file from project root if it exists."""
-    # Walk up from this file to find .env
-    env_path = Path(__file__).resolve().parent.parent.parent / ".env"
-    if env_path.exists():
-        for line in env_path.read_text().splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                key, _, value = line.partition("=")
-                os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
-
 
 def extract_audio(video_path: Path, output_dir: Path) -> Path:
     """Extract audio from video file using ffmpeg.
@@ -256,7 +245,8 @@ def format_transcript(
 
 
 def transcribe_with_deepgram(
-    run_dir: Path,
+    video_path: Path,
+    output_dir: Path,
     metadata: dict,
     force: bool = False,
 ) -> None:
@@ -266,7 +256,6 @@ def transcribe_with_deepgram(
     Raises RuntimeError if the key is missing.
     Always writes to transcript.txt (with **Speaker** markers if multi-speaker).
     """
-    _load_env()
     api_key = os.environ.get("DEEPGRAM_API_KEY")
     if not api_key:
         raise RuntimeError(
@@ -274,39 +263,33 @@ def transcribe_with_deepgram(
             "Get a free key at https://console.deepgram.com/signup"
         )
 
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     # Check for existing output (skip if not forcing)
-    transcript_path = run_dir / "transcript.txt"
+    transcript_path = output_dir / "transcript.txt"
     if not force and transcript_path.exists():
         print(f"Transcript exists, skipping ({transcript_path})")
         return
 
-    # Step 1: Find video file
-    video_files = sorted(run_dir.glob("video.*"))
-    if not video_files:
-        raise RuntimeError(
-            f"No video file in {run_dir} — run download step first"
-        )
-    video_path = video_files[0]
-
-    # Step 2: Extract audio from video
+    # Step 1: Extract audio from video
     print("Extracting audio from video...")
-    audio_path = extract_audio(video_path, run_dir)
+    audio_path = extract_audio(video_path, output_dir)
 
-    # Step 3: Run Deepgram diarization
+    # Step 2: Run Deepgram diarization
     print("Running Deepgram diarization...")
-    segments = run_diarization(audio_path, api_key, run_dir)
+    segments = run_diarization(audio_path, api_key, output_dir)
 
-    # Step 4: Check speaker count
+    # Step 3: Check speaker count
     unique_speakers = set(s["speaker"] for s in segments)
     is_multi_speaker = len(unique_speakers) > 1
 
-    # Step 5: Map speaker names (only if multi-speaker)
+    # Step 4: Map speaker names (only if multi-speaker)
     speaker_names: dict[int, str] | None = None
     if is_multi_speaker:
         print(f"Found {len(unique_speakers)} speakers, mapping names...")
-        speaker_names = map_speaker_names(segments, metadata, run_dir)
+        speaker_names = map_speaker_names(segments, metadata, output_dir)
 
-    # Step 6: Format and save transcript
+    # Step 5: Format and save transcript
     transcript_text = format_transcript(segments, speaker_names)
     transcript_path.write_text(transcript_text)
     print(f"Transcript saved ({len(transcript_text)} chars) -> {transcript_path}")

@@ -35,9 +35,10 @@ def _stream_message(client: anthropic.Anthropic, **kwargs: object) -> str:
     return ""  # unreachable
 
 
-def load_kept_frames(frames_dir: Path) -> list[dict[str, str | int]]:
-    """Load classifications.json and filter to only frames present in kept/."""
-    classifications_path = frames_dir / "classifications.json"
+def load_kept_frames(
+    classifications_path: Path, kept_dir: Path
+) -> list[dict[str, str | int]]:
+    """Load classifications.json and filter to only frames present in kept_dir."""
     if not classifications_path.exists():
         raise FileNotFoundError(f"{classifications_path} not found")
 
@@ -45,7 +46,6 @@ def load_kept_frames(frames_dir: Path) -> list[dict[str, str | int]]:
         classifications_path.read_text()
     )
 
-    kept_dir = frames_dir / "kept"
     kept_names = {p.name for p in kept_dir.glob("frame_*.jpg")} if kept_dir.exists() else set()
 
     kept = [c for c in all_classifications if c.get("frame") in kept_names]
@@ -103,7 +103,7 @@ def place_images_in_essay(
                     "and a set of images extracted from the source video.\n\n"
                     "For each image, decide which paragraph it should be placed AFTER. "
                     "Return ONLY a JSON array of placements, one per image, in this format:\n"
-                    '[{"image": "images/frame_0042.jpg", "after": 5, "alt": "short description"}]\n\n'
+                    f'[{{"image": "{image_prefix}frame_0042.jpg", "after": 5, "alt": "short description"}}]\n\n'
                     "Rules:\n"
                     "- Place each image after the paragraph where it is most contextually relevant\n"
                     "- Use every image exactly once\n"
@@ -139,7 +139,7 @@ def place_images_in_essay(
                 result_parts.append(img_line)
 
     result = "\n\n".join(result_parts)
-    _print_image_stats(result, kept_frames)
+    _print_image_stats(result, kept_frames, image_prefix)
     return result
 
 
@@ -253,9 +253,11 @@ def annotate_essay(
 # Shared helpers
 # ---------------------------------------------------------------------------
 
-def embed_images(essay: str, frames_dir: Path) -> str:
+def embed_images(
+    essay: str, kept_dir: Path, image_prefix: str = "images/"
+) -> str:
     """Replace image file paths with base64 data URIs for self-contained markdown."""
-    kept_dir = frames_dir / "kept"
+    prefix_pattern = re.escape(image_prefix)
 
     def replace_match(m: re.Match[str]) -> str:
         alt = m.group(1)
@@ -267,12 +269,17 @@ def embed_images(essay: str, frames_dir: Path) -> str:
         b64 = base64.b64encode(img_path.read_bytes()).decode("utf-8")
         return f"![{alt}](data:image/jpeg;base64,{b64})"
 
-    return re.sub(r"!\[(.*?)\]\((images/frame_\d+\.jpg)\)", replace_match, essay)
+    return re.sub(
+        rf"!\[(.*?)\]\(({prefix_pattern}frame_\d+\.jpg)\)", replace_match, essay
+    )
 
 
-def _print_image_stats(essay: str, kept: list[dict[str, str | int]]) -> None:
+def _print_image_stats(
+    essay: str, kept: list[dict[str, str | int]], image_prefix: str = "images/"
+) -> None:
     """Print how many images were placed vs available."""
-    placed_files = re.findall(r"!\[.*?\]\(images/(frame_\d+\.jpg)\)", essay)
+    prefix_pattern = re.escape(image_prefix)
+    placed_files = re.findall(rf"!\[.*?\]\({prefix_pattern}(frame_\d+\.jpg)\)", essay)
     data_uri_count = len(re.findall(r"!\[.*?\]\(data:image/jpeg;base64,", essay))
     placed_names = set(placed_files)
     kept_names = {str(f["frame"]) for f in kept}
