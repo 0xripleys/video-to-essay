@@ -30,3 +30,4 @@ PLAN.md
 # Strategy experiment scripts (temporary)
 strategy*.py
 check_coverage.py
+.superpowers/
