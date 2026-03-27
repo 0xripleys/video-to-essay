@@ -2,13 +2,13 @@
 
 Based on: `docs/superpowers/specs/2026-03-27-production-frontend-design.md`
 
-## Phase 1: Database Migration
+## Phase 1: Database
 
-Migrate from the existing single `jobs` table to the new schema. This unblocks everything else.
+Rewrite `db.py` from scratch with the new schema. Delete the old `data/jobs.db` file — we're not in production.
 
 ### Steps
 
-1. **Create `src/video_to_essay/db_v2.py`** — new database module with all tables:
+1. **Rewrite `src/video_to_essay/db.py`** with all tables:
    - `users` (id, email, workos_user_id, created_at)
    - `videos` (id, youtube_video_id, youtube_url, video_title, channel_id, downloaded_at, processed_at, error, created_at)
    - `channels` (id, youtube_channel_id, name, last_checked_at, created_at)
@@ -17,7 +17,7 @@ Migrate from the existing single `jobs` table to the new schema. This unblocks e
    - Helper functions: `create_user()`, `get_user_by_workos_id()`, `create_video()`, `get_video()`, `list_user_videos()`, `create_channel()`, `get_channel_by_youtube_id()`, `create_subscription()`, `list_user_subscriptions()`, `create_delivery()`, `get_pending_deliveries()`, etc.
    - Use WAL mode, same pattern as existing `db.py`
 
-2. **Replace `db.py` with `db_v2.py`** once complete, delete old module
+2. **Delete `data/jobs.db`** if it exists
 
 ### Files touched
 - `src/video_to_essay/db.py` (rewrite)
