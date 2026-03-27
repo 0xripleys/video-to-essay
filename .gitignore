@@ -12,6 +12,14 @@ frames_*/
 *.wav
 *.webm
 
+# Database and runtime data
+data/
+
+# Next.js
+web/node_modules/
+web/.next/
+web/out/
+
 # Generated transcripts and essays (now go in runs/)
 transcript*.txt
 transcript*.srt
