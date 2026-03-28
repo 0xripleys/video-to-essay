@@ -1,27 +1,32 @@
-"""SQLite database for video-to-essay."""
+"""Postgres database for video-to-essay."""
 
-import sqlite3
+import os
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
-DB_PATH = Path("data/surat.db")
+import psycopg
+from dotenv import load_dotenv
+
+load_dotenv()
+from psycopg.rows import dict_row
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     email TEXT UNIQUE NOT NULL,
     workos_user_id TEXT UNIQUE NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TIMESTAMPTZ NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS channels (
     id TEXT PRIMARY KEY,
     youtube_channel_id TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
-    last_checked_at TEXT,
-    created_at TEXT NOT NULL
+    thumbnail_url TEXT,
+    description TEXT,
+    last_checked_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS videos (
@@ -30,10 +35,10 @@ CREATE TABLE IF NOT EXISTS videos (
     youtube_url TEXT NOT NULL,
     video_title TEXT,
     channel_id TEXT REFERENCES channels(id),
-    downloaded_at TEXT,
-    processed_at TEXT,
+    downloaded_at TIMESTAMPTZ,
+    processed_at TIMESTAMPTZ,
     error TEXT,
-    created_at TEXT NOT NULL
+    created_at TIMESTAMPTZ NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS subscriptions (
@@ -41,8 +46,8 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     user_id TEXT NOT NULL REFERENCES users(id),
     channel_id TEXT NOT NULL REFERENCES channels(id),
     poll_interval_hours INTEGER NOT NULL DEFAULT 1,
-    active INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL,
     UNIQUE(user_id, channel_id)
 );
 
@@ -52,9 +57,9 @@ CREATE TABLE IF NOT EXISTS deliveries (
     user_id TEXT NOT NULL REFERENCES users(id),
     source TEXT NOT NULL CHECK(source IN ('one_off', 'subscription')),
     subscription_id TEXT REFERENCES subscriptions(id),
-    sent_at TEXT,
+    sent_at TIMESTAMPTZ,
     error TEXT,
-    created_at TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
     UNIQUE(video_id, user_id)
 );
 """
@@ -68,17 +73,34 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _connect() -> sqlite3.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH), timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    for statement in SCHEMA.strip().split(";"):
-        statement = statement.strip()
-        if statement:
-            conn.execute(statement)
+def _dsn() -> str:
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        raise RuntimeError("DATABASE_URL environment variable is required")
+    return dsn
+
+
+def _connect() -> psycopg.Connection:
+    conn = psycopg.connect(_dsn(), row_factory=dict_row)
     return conn
+
+
+MIGRATIONS = [
+    "ALTER TABLE channels ADD COLUMN IF NOT EXISTS thumbnail_url TEXT",
+    "ALTER TABLE channels ADD COLUMN IF NOT EXISTS description TEXT",
+]
+
+
+def init_db() -> None:
+    """Create tables if they don't exist."""
+    with psycopg.connect(_dsn()) as conn:
+        for statement in SCHEMA.strip().split(";"):
+            statement = statement.strip()
+            if statement:
+                conn.execute(statement)
+        for migration in MIGRATIONS:
+            conn.execute(migration)
+        conn.commit()
 
 
 # --- Users ---
@@ -88,16 +110,17 @@ def create_user(email: str, workos_user_id: str) -> str:
     user_id = _uid()
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO users (id, email, workos_user_id, created_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO users (id, email, workos_user_id, created_at) VALUES (%s, %s, %s, %s)",
             (user_id, email, workos_user_id, _now()),
         )
+        conn.commit()
     return user_id
 
 
 def get_user_by_workos_id(workos_user_id: str) -> dict[str, Any] | None:
     with _connect() as conn:
         row = conn.execute(
-            "SELECT * FROM users WHERE workos_user_id = ?", (workos_user_id,)
+            "SELECT * FROM users WHERE workos_user_id = %s", (workos_user_id,)
         ).fetchone()
     return dict(row) if row else None
 
@@ -118,16 +141,17 @@ def create_channel(youtube_channel_id: str, name: str) -> str:
     channel_id = _uid()
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO channels (id, youtube_channel_id, name, created_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO channels (id, youtube_channel_id, name, created_at) VALUES (%s, %s, %s, %s)",
             (channel_id, youtube_channel_id, name, _now()),
         )
+        conn.commit()
     return channel_id
 
 
 def get_channel_by_youtube_id(youtube_channel_id: str) -> dict[str, Any] | None:
     with _connect() as conn:
         row = conn.execute(
-            "SELECT * FROM channels WHERE youtube_channel_id = ?",
+            "SELECT * FROM channels WHERE youtube_channel_id = %s",
             (youtube_channel_id,),
         ).fetchone()
     return dict(row) if row else None
@@ -148,9 +172,19 @@ def get_or_create_channel(youtube_channel_id: str, name: str) -> dict[str, Any]:
 def update_channel_checked(channel_id: str) -> None:
     with _connect() as conn:
         conn.execute(
-            "UPDATE channels SET last_checked_at = ? WHERE id = ?",
+            "UPDATE channels SET last_checked_at = %s WHERE id = %s",
             (_now(), channel_id),
         )
+        conn.commit()
+
+
+def update_channel_name(channel_id: str, name: str) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE channels SET name = %s WHERE id = %s",
+            (name, channel_id),
+        )
+        conn.commit()
 
 
 def get_channels_due_for_check() -> list[dict[str, Any]]:
@@ -160,13 +194,13 @@ def get_channels_due_for_check() -> list[dict[str, Any]]:
             """
             SELECT c.*, MIN(s.poll_interval_hours) as min_interval
             FROM channels c
-            JOIN subscriptions s ON s.channel_id = c.id AND s.active = 1
+            JOIN subscriptions s ON s.channel_id = c.id AND s.active = TRUE
             WHERE c.last_checked_at IS NULL
-               OR datetime(c.last_checked_at, '+' || (
-                   SELECT MIN(s2.poll_interval_hours)
-                   FROM subscriptions s2
-                   WHERE s2.channel_id = c.id AND s2.active = 1
-               ) || ' hours') <= datetime('now')
+               OR c.last_checked_at + (
+                   (SELECT MIN(s2.poll_interval_hours)
+                    FROM subscriptions s2
+                    WHERE s2.channel_id = c.id AND s2.active = TRUE
+                   ) || ' hours')::interval <= NOW()
             GROUP BY c.id
             """
         ).fetchall()
@@ -182,9 +216,10 @@ def create_subscription(
     sub_id = _uid()
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO subscriptions (id, user_id, channel_id, poll_interval_hours, active, created_at) VALUES (?, ?, ?, ?, 1, ?)",
+            "INSERT INTO subscriptions (id, user_id, channel_id, poll_interval_hours, active, created_at) VALUES (%s, %s, %s, %s, TRUE, %s)",
             (sub_id, user_id, channel_id, poll_interval_hours, _now()),
         )
+        conn.commit()
     return sub_id
 
 
@@ -195,7 +230,7 @@ def list_user_subscriptions(user_id: str) -> list[dict[str, Any]]:
             SELECT s.*, c.youtube_channel_id, c.name as channel_name
             FROM subscriptions s
             JOIN channels c ON c.id = s.channel_id
-            WHERE s.user_id = ? AND s.active = 1
+            WHERE s.user_id = %s AND s.active = TRUE
             ORDER BY s.created_at DESC
             """,
             (user_id,),
@@ -206,7 +241,7 @@ def list_user_subscriptions(user_id: str) -> list[dict[str, Any]]:
 def get_subscription(sub_id: str) -> dict[str, Any] | None:
     with _connect() as conn:
         row = conn.execute(
-            "SELECT * FROM subscriptions WHERE id = ?", (sub_id,)
+            "SELECT * FROM subscriptions WHERE id = %s", (sub_id,)
         ).fetchone()
     return dict(row) if row else None
 
@@ -214,16 +249,18 @@ def get_subscription(sub_id: str) -> dict[str, Any] | None:
 def deactivate_subscription(sub_id: str) -> None:
     with _connect() as conn:
         conn.execute(
-            "UPDATE subscriptions SET active = 0 WHERE id = ?", (sub_id,)
+            "UPDATE subscriptions SET active = FALSE WHERE id = %s", (sub_id,)
         )
+        conn.commit()
 
 
 def update_subscription_interval(sub_id: str, poll_interval_hours: int) -> None:
     with _connect() as conn:
         conn.execute(
-            "UPDATE subscriptions SET poll_interval_hours = ? WHERE id = ?",
+            "UPDATE subscriptions SET poll_interval_hours = %s WHERE id = %s",
             (poll_interval_hours, sub_id),
         )
+        conn.commit()
 
 
 # --- Videos ---
@@ -238,16 +275,17 @@ def create_video(
     video_id = _uid()
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO videos (id, youtube_video_id, youtube_url, video_title, channel_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO videos (id, youtube_video_id, youtube_url, video_title, channel_id, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
             (video_id, youtube_video_id, youtube_url, video_title, channel_id, _now()),
         )
+        conn.commit()
     return video_id
 
 
 def get_video(video_id: str) -> dict[str, Any] | None:
     with _connect() as conn:
         row = conn.execute(
-            "SELECT * FROM videos WHERE id = ?", (video_id,)
+            "SELECT * FROM videos WHERE id = %s", (video_id,)
         ).fetchone()
     return dict(row) if row else None
 
@@ -255,7 +293,7 @@ def get_video(video_id: str) -> dict[str, Any] | None:
 def get_video_by_youtube_id(youtube_video_id: str) -> dict[str, Any] | None:
     with _connect() as conn:
         row = conn.execute(
-            "SELECT * FROM videos WHERE youtube_video_id = ?", (youtube_video_id,)
+            "SELECT * FROM videos WHERE youtube_video_id = %s", (youtube_video_id,)
         ).fetchone()
     return dict(row) if row else None
 
@@ -284,17 +322,17 @@ def list_user_videos(user_id: str) -> list[dict[str, Any]]:
     with _connect() as conn:
         rows = conn.execute(
             """
-            SELECT DISTINCT v.*, c.name as channel_name,
+            SELECT DISTINCT ON (v.id) v.*, c.name as channel_name,
                    d.source, d.sent_at as delivery_sent_at
             FROM videos v
             LEFT JOIN channels c ON c.id = v.channel_id
-            LEFT JOIN deliveries d ON d.video_id = v.id AND d.user_id = ?
-            WHERE d.user_id = ?
+            LEFT JOIN deliveries d ON d.video_id = v.id AND d.user_id = %s
+            WHERE d.user_id = %s
                OR v.channel_id IN (
                    SELECT s.channel_id FROM subscriptions s
-                   WHERE s.user_id = ? AND s.active = 1
+                   WHERE s.user_id = %s AND s.active = TRUE
                )
-            ORDER BY v.created_at DESC
+            ORDER BY v.id, v.created_at DESC
             """,
             (user_id, user_id, user_id),
         ).fetchall()
@@ -335,10 +373,11 @@ def mark_video_failed(video_id: str, error: str) -> None:
 def _update_video(video_id: str, **fields: Any) -> None:
     if not fields:
         return
-    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    set_clause = ", ".join(f"{k} = %s" for k in fields)
     values = list(fields.values()) + [video_id]
     with _connect() as conn:
-        conn.execute(f"UPDATE videos SET {set_clause} WHERE id = ?", values)
+        conn.execute(f"UPDATE videos SET {set_clause} WHERE id = %s", values)
+        conn.commit()
 
 
 # --- Deliveries ---
@@ -355,11 +394,12 @@ def create_delivery(
     try:
         with _connect() as conn:
             conn.execute(
-                "INSERT INTO deliveries (id, video_id, user_id, source, subscription_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO deliveries (id, video_id, user_id, source, subscription_id, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
                 (delivery_id, video_id, user_id, source, subscription_id, _now()),
             )
+            conn.commit()
         return delivery_id
-    except sqlite3.IntegrityError:
+    except psycopg.errors.UniqueViolation:
         return None
 
 
@@ -390,7 +430,7 @@ def get_pending_subscription_deliveries() -> list[dict[str, Any]]:
                    u.id as user_id, u.email, s.id as subscription_id
             FROM videos v
             JOIN channels c ON c.id = v.channel_id
-            JOIN subscriptions s ON s.channel_id = c.id AND s.active = 1
+            JOIN subscriptions s ON s.channel_id = c.id AND s.active = TRUE
             JOIN users u ON u.id = s.user_id
             LEFT JOIN deliveries d ON d.video_id = v.id AND d.user_id = u.id
             WHERE v.processed_at IS NOT NULL
@@ -403,14 +443,16 @@ def get_pending_subscription_deliveries() -> list[dict[str, Any]]:
 def mark_delivery_sent(delivery_id: str) -> None:
     with _connect() as conn:
         conn.execute(
-            "UPDATE deliveries SET sent_at = ? WHERE id = ?",
+            "UPDATE deliveries SET sent_at = %s WHERE id = %s",
             (_now(), delivery_id),
         )
+        conn.commit()
 
 
 def mark_delivery_failed(delivery_id: str, error: str) -> None:
     with _connect() as conn:
         conn.execute(
-            "UPDATE deliveries SET error = ? WHERE id = ?",
+            "UPDATE deliveries SET error = %s WHERE id = %s",
             (error, delivery_id),
         )
+        conn.commit()

@@ -8,12 +8,12 @@ interface Subscription {
   channel_id: string;
   channel_name: string;
   youtube_channel_id: string;
+  thumbnail_url: string | null;
+  description: string | null;
   poll_interval_hours: number;
   active: number;
   created_at: string;
 }
-
-const INTERVAL_OPTIONS = [1, 2, 4, 8, 12, 24];
 
 export default function SubscriptionsPage() {
   const [subs, setSubs] = useState<Subscription[]>([]);
@@ -66,19 +66,6 @@ export default function SubscriptionsPage() {
     }
   }
 
-  async function handleIntervalChange(subId: string, hours: number) {
-    try {
-      await api(`/api/subscriptions/${subId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ poll_interval_hours: hours }),
-      });
-      await fetchSubs();
-    } catch {
-      // ignore
-    }
-  }
-
   return (
     <div className="mx-auto max-w-3xl px-6 py-8">
       <h1 className="text-xl font-bold tracking-tight">Subscriptions</h1>
@@ -98,7 +85,7 @@ export default function SubscriptionsPage() {
         <button
           type="submit"
           disabled={submitting}
-          className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          className="rounded-lg bg-stone-900 px-5 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
         >
           {submitting ? "..." : "Subscribe"}
         </button>
@@ -115,32 +102,28 @@ export default function SubscriptionsPage() {
         {subs.map((sub) => (
           <div
             key={sub.id}
-            className="flex items-center justify-between rounded-lg border border-stone-200 bg-white px-4 py-3"
+            className="flex items-start gap-4 rounded-lg border border-stone-200 bg-white px-4 py-3"
           >
+            {sub.thumbnail_url && (
+              <img
+                src={sub.thumbnail_url}
+                alt={sub.channel_name}
+                className="h-10 w-10 flex-shrink-0 rounded-full object-cover"
+              />
+            )}
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium text-stone-900">
                 {sub.channel_name}
               </p>
-              <p className="text-xs text-stone-400">
-                Check every{" "}
-                <select
-                  value={sub.poll_interval_hours}
-                  onChange={(e) =>
-                    handleIntervalChange(sub.id, Number(e.target.value))
-                  }
-                  className="rounded border border-stone-200 bg-stone-50 px-1 py-0.5 text-xs"
-                >
-                  {INTERVAL_OPTIONS.map((h) => (
-                    <option key={h} value={h}>
-                      {h === 1 ? "1 hour" : `${h} hours`}
-                    </option>
-                  ))}
-                </select>
-              </p>
+              {sub.description && (
+                <p className="mt-0.5 line-clamp-1 text-xs text-stone-500">
+                  {sub.description}
+                </p>
+              )}
             </div>
             <button
               onClick={() => handleUnsubscribe(sub.id)}
-              className="ml-4 text-xs text-stone-400 hover:text-red-500"
+              className="ml-4 flex-shrink-0 text-xs text-stone-400 hover:text-red-500"
             >
               Unsubscribe
             </button>

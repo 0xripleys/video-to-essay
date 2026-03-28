@@ -6,6 +6,7 @@ using yt-dlp and sets downloaded_at.
 """
 
 import json
+import os
 import traceback
 import time
 from pathlib import Path
@@ -51,6 +52,9 @@ def _download_one(video: dict) -> None:
 def download_loop(poll_interval: float = 10.0) -> None:
     """Poll for videos pending download and process them."""
     print(f"Download worker started (polling every {poll_interval}s)")
+    for key in ("DATABASE_URL",):
+        val = os.environ.get(key)
+        print(f"  {key}: {'set' if val else 'NOT SET'}")
     while True:
         try:
             videos = db.get_videos_pending_download()

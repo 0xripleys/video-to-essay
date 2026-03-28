@@ -1,5 +1,6 @@
 """Deliver worker: sends essay emails for processed videos."""
 
+import os
 import traceback
 import time
 from pathlib import Path
@@ -74,6 +75,9 @@ def _deliver_subscriptions() -> None:
 def deliver_loop(poll_interval: float = 15.0) -> None:
     """Poll for pending deliveries and send emails."""
     print(f"Deliver worker started (polling every {poll_interval}s)")
+    for key in ("DATABASE_URL", "AGENTMAIL_API_KEY", "AGENTMAIL_INBOX_ID"):
+        val = os.environ.get(key)
+        print(f"  {key}: {'set' if val else 'NOT SET'}")
     while True:
         try:
             _deliver_one_offs()

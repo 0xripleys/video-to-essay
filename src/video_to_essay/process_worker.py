@@ -1,6 +1,7 @@
 """Process worker: runs the pipeline (transcript -> essay -> frames -> images) on downloaded videos."""
 
 import json
+import os
 import traceback
 import time
 from pathlib import Path
@@ -101,6 +102,9 @@ def _process_one(video: dict) -> None:
 def process_loop(poll_interval: float = 10.0) -> None:
     """Poll for videos pending processing and run the pipeline."""
     print(f"Process worker started (polling every {poll_interval}s)")
+    for key in ("DATABASE_URL", "ANTHROPIC_API_KEY", "DEEPGRAM_API_KEY"):
+        val = os.environ.get(key)
+        print(f"  {key}: {'set' if val else 'NOT SET'}")
     while True:
         try:
             videos = db.get_videos_pending_processing()

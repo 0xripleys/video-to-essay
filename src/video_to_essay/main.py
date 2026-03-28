@@ -613,20 +613,63 @@ def score_dimension_cmd(
 
 @app.command()
 def serve(
-    host: str = typer.Option("0.0.0.0", "--host", help="Host to bind to"),
-    port: int = typer.Option(8000, "--port", help="Port to bind to"),
+    no_workers: bool = typer.Option(False, "--no-workers", help="Disable background workers"),
 ) -> None:
-    """Start the web server and background worker."""
-    import uvicorn
+    """Start background workers (web server runs separately via Next.js)."""
+    import time
 
-    from .api import app as fastapi_app
-    from .api import mount_static
+    from . import db
+
+    db.init_db()
+
+    if no_workers:
+        print("Workers disabled. Nothing to do.")
+        return
+
     from .worker import start_worker_threads
 
-    mount_static()
+    print("Starting background workers...")
     start_worker_threads()
-    print(f"Starting server on {host}:{port}")
-    uvicorn.run(fastapi_app, host=host, port=port)
+    print("Workers running. Press Ctrl+C to stop.")
+    try:
+        while True:
+            time.sleep(60)
+    except KeyboardInterrupt:
+        print("\nStopping workers.")
+
+
+WORKER_NAMES = ["discover", "download", "process", "deliver"]
+
+
+@app.command()
+def worker(
+    name: str = typer.Argument(..., help=f"Worker to run: {', '.join(WORKER_NAMES)}"),
+    interval: float = typer.Option(0, "--interval", help="Poll interval in seconds (0 = use default)"),
+) -> None:
+    """Run a single worker process (for production deployment)."""
+    if name not in WORKER_NAMES:
+        print(f"Unknown worker: {name}. Choose from: {', '.join(WORKER_NAMES)}")
+        raise typer.Exit(1)
+
+    from . import db
+
+    db.init_db()
+
+    from .discover_worker import discover_loop
+    from .download_worker import download_loop
+    from .process_worker import process_loop
+    from .deliver_worker import deliver_loop
+
+    loops: dict[str, tuple[callable, float]] = {
+        "discover": (discover_loop, 60.0),
+        "download": (download_loop, 10.0),
+        "process": (process_loop, 10.0),
+        "deliver": (deliver_loop, 15.0),
+    }
+
+    loop_fn, default_interval = loops[name]
+    actual_interval = interval if interval > 0 else default_interval
+    loop_fn(actual_interval)
 
 
 if __name__ == "__main__":

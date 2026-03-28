@@ -34,7 +34,7 @@ function ReaderContent() {
     return (
       <div className="mx-auto max-w-3xl px-6 py-8">
         <p className="text-stone-400">No video ID provided.</p>
-        <Link href="/" className="text-sm text-blue-600 hover:text-blue-700">
+        <Link href="/" className="text-sm text-stone-500 hover:text-stone-900">
           &larr; Back to Videos
         </Link>
       </div>
@@ -44,7 +44,7 @@ function ReaderContent() {
   if (error) {
     return (
       <div className="mx-auto max-w-3xl px-6 py-8">
-        <Link href="/" className="text-sm text-blue-600 hover:text-blue-700">
+        <Link href="/" className="text-sm text-stone-500 hover:text-stone-900">
           &larr; Back to Videos
         </Link>
         <p className="mt-4 text-red-600">{error}</p>
@@ -62,7 +62,7 @@ function ReaderContent() {
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-8">
-      <Link href="/" className="text-sm text-blue-600 hover:text-blue-700">
+      <Link href="/" className="text-sm text-stone-500 hover:text-stone-900">
         &larr; Back to Videos
       </Link>
 
@@ -81,7 +81,7 @@ function ReaderContent() {
           href={video.youtube_url}
           target="_blank"
           rel="noopener noreferrer"
-          className="mt-1 inline-block text-sm text-blue-600 hover:text-blue-700"
+          className="mt-1 inline-block text-sm text-stone-500 hover:text-stone-900"
         >
           Watch on YouTube &nearr;
         </a>

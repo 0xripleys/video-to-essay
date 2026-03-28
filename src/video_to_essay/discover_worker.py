@@ -1,7 +1,9 @@
 """Discover worker: polls YouTube RSS feeds for new videos on subscribed channels."""
 
+import os
 import traceback
 import time
+from datetime import datetime, timezone
 from xml.etree import ElementTree
 
 import httpx
@@ -26,17 +28,31 @@ def _check_channel(channel: dict) -> int:
     # Update channel name from feed title if it's still a placeholder
     feed_title = root.findtext(f"{ATOM_NS}title")
     if feed_title and channel["name"] == youtube_channel_id:
-        with db._connect() as conn:
-            conn.execute(
-                "UPDATE channels SET name = ? WHERE id = ?",
-                (feed_title, channel["id"]),
-            )
+        db.update_channel_name(channel["id"], feed_title)
+
+    # Only add videos published after the channel was added to our system.
+    # On first check (last_checked_at is None), use created_at as the cutoff
+    # so we don't backfill the entire RSS feed.
+    cutoff = channel.get("last_checked_at") or channel["created_at"]
+    if isinstance(cutoff, str):
+        cutoff = datetime.fromisoformat(cutoff)
+    if cutoff.tzinfo is None:
+        cutoff = cutoff.replace(tzinfo=timezone.utc)
 
     new_count = 0
     for entry in root.findall(f"{ATOM_NS}entry"):
         video_id = entry.findtext(f"{YT_NS}videoId")
         if not video_id:
             continue
+
+        # Skip videos published before we started tracking this channel
+        published_str = entry.findtext(f"{ATOM_NS}published")
+        if published_str:
+            published = datetime.fromisoformat(published_str)
+            if published.tzinfo is None:
+                published = published.replace(tzinfo=timezone.utc)
+            if published <= cutoff:
+                continue
 
         # Check if we already have this video
         existing = db.get_video_by_youtube_id(video_id)
@@ -61,6 +77,9 @@ def _check_channel(channel: dict) -> int:
 def discover_loop(poll_interval: float = 60.0) -> None:
     """Poll for channels due for a check and discover new videos."""
     print(f"Discover worker started (polling every {poll_interval}s)")
+    for key in ("DATABASE_URL",):
+        val = os.environ.get(key)
+        print(f"  {key}: {'set' if val else 'NOT SET'}")
     while True:
         try:
             channels = db.get_channels_due_for_check()

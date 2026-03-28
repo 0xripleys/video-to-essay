@@ -19,6 +19,7 @@ data/
 web/node_modules/
 web/.next/
 web/out/
+web/.env.local
 
 # Generated transcripts and essays (now go in runs/)
 transcript*.txt
