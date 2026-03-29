@@ -3,14 +3,93 @@
 import { createContext, useContext, useEffect, useState } from "react";
 
 type AuthState = "loading" | "authenticated" | "unauthenticated";
+type View = "feed" | "channels";
 
 const AuthContext = createContext<AuthState>("loading");
+const ViewContext = createContext<{ view: View; setView: (v: View) => void }>({
+  view: "feed",
+  setView: () => {},
+});
+
 export function useAuth() {
   return useContext(AuthContext);
 }
 
+export function useView() {
+  return useContext(ViewContext);
+}
+
+function Sidebar() {
+  const { view, setView } = useView();
+
+  return (
+    <aside className="flex w-52 flex-shrink-0 flex-col border-r border-stone-200 bg-stone-50 px-3 pb-6 pt-4">
+      <a href="/" className="mb-6 px-2 text-[15px] font-semibold tracking-tight text-stone-900">
+        Surat
+      </a>
+
+      <nav className="flex flex-1 flex-col gap-0.5">
+        <button
+          onClick={() => setView("feed")}
+          className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] transition-colors ${
+            view === "feed"
+              ? "bg-white font-semibold text-stone-900 shadow-sm ring-1 ring-stone-200"
+              : "text-stone-500 hover:bg-stone-100 hover:text-stone-700"
+          }`}
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+          >
+            <path d="M4 6h16M4 12h16M4 18h7" />
+          </svg>
+          Feed
+        </button>
+
+        <button
+          onClick={() => setView("channels")}
+          className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] transition-colors ${
+            view === "channels"
+              ? "bg-white font-semibold text-stone-900 shadow-sm ring-1 ring-stone-200"
+              : "text-stone-500 hover:bg-stone-100 hover:text-stone-700"
+          }`}
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+          >
+            <rect x="2" y="3" width="20" height="14" rx="2" />
+            <path d="M8 21h8M12 17v4" />
+          </svg>
+          Channels
+        </button>
+      </nav>
+
+      <div className="border-t border-stone-200 pt-3">
+        <a
+          href="/api/auth/logout"
+          className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] text-stone-500 transition-colors hover:bg-stone-100 hover:text-stone-700"
+        >
+          Sign out
+        </a>
+      </div>
+    </aside>
+  );
+}
+
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const [auth, setAuth] = useState<AuthState>("loading");
+  const [view, setView] = useState<View>("feed");
 
   useEffect(() => {
     fetch("/api/auth/me", { credentials: "include" })
@@ -20,24 +99,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthContext.Provider value={auth}>
-      {auth === "loading" ? null : auth === "authenticated" ? (
-        <div className="flex min-h-screen flex-col">
-          <nav className="flex items-center justify-between border-b border-stone-200 bg-white px-6 py-3">
-            <a href="/" className="text-[15px] font-semibold tracking-tight text-stone-900">
-              Surat
-            </a>
-            <a
-              href="/api/auth/logout"
-              className="text-sm text-stone-500 hover:text-stone-900"
-            >
-              Sign out
-            </a>
-          </nav>
-          <main className="flex-1 overflow-y-auto">{children}</main>
-        </div>
-      ) : (
-        <>{children}</>
-      )}
+      <ViewContext.Provider value={{ view, setView }}>
+        {auth === "loading" ? null : auth === "authenticated" ? (
+          <div className="flex h-screen">
+            <Sidebar />
+            <main className="flex-1 overflow-y-auto">{children}</main>
+          </div>
+        ) : (
+          <>{children}</>
+        )}
+      </ViewContext.Provider>
     </AuthContext.Provider>
   );
 }

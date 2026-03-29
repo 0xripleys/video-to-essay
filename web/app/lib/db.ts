@@ -205,9 +205,12 @@ export async function createSubscription(
 
 export async function listUserSubscriptions(
   userId: string,
-): Promise<(Subscription & { youtube_channel_id: string; channel_name: string; thumbnail_url: string | null; description: string | null })[]> {
+): Promise<(Subscription & { youtube_channel_id: string; channel_name: string; thumbnail_url: string | null; description: string | null; video_count: number })[]> {
   const { rows } = await pool.query(
-    `SELECT s.*, c.youtube_channel_id, c.name as channel_name, c.thumbnail_url, c.description
+    `SELECT s.*, c.youtube_channel_id, c.name as channel_name, c.thumbnail_url, c.description,
+       (SELECT COUNT(*) FROM videos v
+        JOIN deliveries d ON d.video_id = v.id AND d.user_id = s.user_id
+        WHERE v.channel_id = c.id)::int as video_count
      FROM subscriptions s
      JOIN channels c ON c.id = s.channel_id
      WHERE s.user_id = $1 AND s.active = TRUE
