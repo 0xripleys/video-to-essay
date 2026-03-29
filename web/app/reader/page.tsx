@@ -83,7 +83,7 @@ function ReaderContent() {
           rel="noopener noreferrer"
           className="mt-1 inline-block text-sm text-stone-500 hover:text-stone-900"
         >
-          Watch on YouTube &nearr;
+          Watch on YouTube &#x2197;
         </a>
       </div>
 
