@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { readFile } from "fs/promises";
-import path from "path";
 import { requireAuth } from "@/app/lib/auth";
 import { getVideo } from "@/app/lib/db";
+import { getEssayFromS3 } from "@/app/lib/s3";
 
 export async function GET(
   _request: NextRequest,
@@ -37,18 +36,7 @@ export async function GET(
   };
 
   if (status === "done") {
-    const runsDir = process.env.RUNS_DIR || path.join(process.cwd(), "..", "runs");
-    const essayPath = path.join(
-      runsDir,
-      video.youtube_video_id,
-      "05_place_images",
-      "essay_final.md",
-    );
-    try {
-      result.essay_md = await readFile(essayPath, "utf-8");
-    } catch {
-      // Essay file not found — that's fine
-    }
+    result.essay_md = await getEssayFromS3(video.youtube_video_id);
   }
 
   return NextResponse.json(result);

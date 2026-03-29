@@ -109,6 +109,10 @@ All stored in `.env` at project root:
 | `WORKOS_API_KEY` | Web | Auth (unset = dev mode) |
 | `WORKOS_CLIENT_ID` | Web | Auth |
 | `WORKOS_COOKIE_PASSWORD` | Web | Session cookie encryption |
+| `S3_BUCKET_NAME` | Workers + Web | S3 bucket for run artifacts |
+| `AWS_ACCESS_KEY_ID` | Workers + Web | AWS auth for S3 |
+| `AWS_SECRET_ACCESS_KEY` | Workers + Web | AWS auth for S3 |
+| `AWS_REGION` | Workers + Web | S3 bucket region (default: us-east-1) |
 
 ## Dependencies Beyond pip/npm
 

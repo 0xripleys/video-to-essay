@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import traceback
 import time
 from pathlib import Path
@@ -12,10 +13,10 @@ from .extract_frames import extract_and_classify, parse_transcript
 from .filter_sponsors import filter_sponsors
 from .place_images import (
     annotate_essay,
-    embed_images,
     load_kept_frames,
     place_images_in_essay,
 )
+from .s3 import download_run, get_public_url, upload_run
 from .transcriber import transcript_to_essay
 
 RUNS_DIR = Path("runs")
@@ -40,6 +41,8 @@ def _process_one(video: dict) -> None:
     youtube_video_id = video["youtube_video_id"]
     run_dir = RUNS_DIR / youtube_video_id
     dl_dir = run_dir / "00_download"
+
+    download_run(youtube_video_id, step_dirs=["00_download"])
 
     # Find the video file
     video_files = sorted(dl_dir.glob("video.*"))
@@ -89,11 +92,27 @@ def _process_one(video: dict) -> None:
     if kept:
         with_images = place_images_in_essay(essay_text, kept, image_prefix)
         annotated = annotate_essay(with_images)
-        final_essay = embed_images(annotated, kept_dir, image_prefix)
+        # Upload frames first so S3 URLs are valid
+        upload_run(youtube_video_id, step_dirs=["04_frames"])
+        # Rewrite relative image paths to public S3 URLs
+        prefix_pattern = re.escape(image_prefix)
+        def _to_s3_url(m: re.Match[str]) -> str:
+            alt, filename = m.group(1), Path(m.group(2)).name
+            url = get_public_url(f"runs/{youtube_video_id}/04_frames/kept/{filename}")
+            return f"![{alt}]({url})"
+        final_essay = re.sub(
+            rf"!\[(.*?)\]\(({prefix_pattern}frame_\d+\.jpg)\)",
+            _to_s3_url,
+            annotated,
+        )
     else:
         final_essay = essay_text
 
     (place_dir / "essay_final.md").write_text(final_essay)
+
+    upload_run(youtube_video_id, step_dirs=[
+        "01_transcript", "02_filter_sponsors", "03_essay", "05_place_images",
+    ])
 
     db.mark_video_processed(video["id"])
     print(f"Process: completed {youtube_video_id} ({video.get('video_title', 'untitled')})")
@@ -102,7 +121,7 @@ def _process_one(video: dict) -> None:
 def process_loop(poll_interval: float = 10.0) -> None:
     """Poll for videos pending processing and run the pipeline."""
     print(f"Process worker started (polling every {poll_interval}s)")
-    for key in ("DATABASE_URL", "ANTHROPIC_API_KEY", "DEEPGRAM_API_KEY"):
+    for key in ("DATABASE_URL", "ANTHROPIC_API_KEY", "DEEPGRAM_API_KEY", "S3_BUCKET_NAME"):
         val = os.environ.get(key)
         print(f"  {key}: {'set' if val else 'NOT SET'}")
     while True:

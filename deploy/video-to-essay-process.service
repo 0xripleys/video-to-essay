@@ -1,0 +1,15 @@
+[Unit]
+Description=Video-to-Essay Process Worker
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/video-to-essay
+EnvironmentFile=/root/video-to-essay/.env
+ExecStart=/root/.local/bin/uv run python -c "from video_to_essay.process_worker import process_loop; process_loop()"
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -3,25 +3,21 @@
 import logging
 import os
 import time
-from pathlib import Path
 
 from . import db
 from .email_sender import send_essay
+from .s3 import download_file
 
 logger = logging.getLogger(__name__)
 
-RUNS_DIR = Path("runs")
-
 
 def _get_essay(youtube_video_id: str) -> str | None:
-    """Read the final essay from disk (S3 integration later)."""
-    essay_path = RUNS_DIR / youtube_video_id / "05_place_images" / "essay_final.md"
-    if essay_path.exists():
-        return essay_path.read_text()
-    # Fall back to plain essay without images
-    essay_path = RUNS_DIR / youtube_video_id / "03_essay" / "essay.md"
-    if essay_path.exists():
-        return essay_path.read_text()
+    """Read the final essay from S3."""
+    for path in ("05_place_images/essay_final.md", "03_essay/essay.md"):
+        try:
+            return download_file(youtube_video_id, path).decode()
+        except Exception:
+            continue
     return None
 
 
@@ -57,7 +53,7 @@ def deliver_loop(poll_interval: float = 15.0) -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
     logger.info("Deliver worker started (polling every %.1fs)", poll_interval)
-    for key in ("DATABASE_URL", "AGENTMAIL_API_KEY", "AGENTMAIL_INBOX_ID"):
+    for key in ("DATABASE_URL", "AGENTMAIL_API_KEY", "AGENTMAIL_INBOX_ID", "S3_BUCKET_NAME"):
         val = os.environ.get(key)
         logger.info("  %s: %s", key, "set" if val else "NOT SET")
     while True:

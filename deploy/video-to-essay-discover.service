@@ -1,0 +1,15 @@
+[Unit]
+Description=Video-to-Essay Discover Worker
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/video-to-essay
+EnvironmentFile=/root/video-to-essay/.env
+ExecStart=/root/.local/bin/uv run python -c "from video_to_essay.discover_worker import discover_loop; discover_loop()"
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

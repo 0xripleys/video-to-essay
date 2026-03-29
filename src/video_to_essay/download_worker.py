@@ -1,9 +1,4 @@
-"""Download worker: downloads videos and marks them as downloaded.
-
-This is a local dev stub. In production, this runs on a machine with
-residential proxy access and uploads to S3. For now, it downloads locally
-using yt-dlp and sets downloaded_at.
-"""
+"""Download worker: downloads videos via yt-dlp, uploads to S3, marks as downloaded."""
 
 import json
 import os
@@ -12,6 +7,7 @@ import time
 from pathlib import Path
 
 from . import db
+from .s3 import upload_run
 from .transcriber import download_video, fetch_video_metadata
 
 RUNS_DIR = Path("runs")
@@ -45,6 +41,7 @@ def _download_one(video: dict) -> None:
         meta_data = json.loads(meta_path.read_text())
         title = meta_data.get("title")
 
+    upload_run(video_id, step_dirs=["00_download"])
     db.mark_video_downloaded(video["id"], video_title=title)
     print(f"Download: completed {video_id} ({title or 'untitled'})")
 
@@ -52,7 +49,7 @@ def _download_one(video: dict) -> None:
 def download_loop(poll_interval: float = 10.0) -> None:
     """Poll for videos pending download and process them."""
     print(f"Download worker started (polling every {poll_interval}s)")
-    for key in ("DATABASE_URL",):
+    for key in ("DATABASE_URL", "S3_BUCKET_NAME"):
         val = os.environ.get(key)
         print(f"  {key}: {'set' if val else 'NOT SET'}")
     while True:
