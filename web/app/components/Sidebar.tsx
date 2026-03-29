@@ -6,7 +6,6 @@ import { usePathname } from "next/navigation";
 const NAV_ITEMS = [
   { href: "/", label: "Videos" },
   { href: "/subscriptions", label: "Subscriptions" },
-  { href: "/settings", label: "Settings" },
 ];
 
 export default function Sidebar() {

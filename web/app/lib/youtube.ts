@@ -3,6 +3,7 @@ export interface YouTubeChannelInfo {
   name: string;
   description: string;
   thumbnailUrl: string;
+  subscriberCount?: string;
 }
 
 export async function resolveChannel(
@@ -65,4 +66,42 @@ async function fetchAndParse(url: string): Promise<YouTubeChannelInfo | null> {
       item.snippet.thumbnails?.default?.url ??
       "",
   };
+}
+
+export async function searchChannels(
+  query: string,
+): Promise<YouTubeChannelInfo[]> {
+  const apiKey = process.env.YOUTUBE_API_KEY;
+  if (!apiKey) throw new Error("YOUTUBE_API_KEY must be set");
+
+  const searchUrl = `https://www.googleapis.com/youtube/v3/search?q=${encodeURIComponent(query)}&type=channel&maxResults=5&part=snippet&key=${apiKey}`;
+  const searchRes = await fetch(searchUrl);
+  if (!searchRes.ok) return [];
+
+  const searchData = await searchRes.json();
+  const items = searchData.items;
+  if (!items?.length) return [];
+
+  // Fetch subscriber counts for all channels in one request
+  const channelIds = items.map((item: { id: { channelId: string } }) => item.id.channelId).join(",");
+  const statsUrl = `https://www.googleapis.com/youtube/v3/channels?id=${channelIds}&part=statistics&key=${apiKey}`;
+  const statsRes = await fetch(statsUrl);
+  const statsMap = new Map<string, string>();
+  if (statsRes.ok) {
+    const statsData = await statsRes.json();
+    for (const ch of statsData.items ?? []) {
+      statsMap.set(ch.id, ch.statistics?.subscriberCount ?? "0");
+    }
+  }
+
+  return items.map((item: { id: { channelId: string }; snippet: { title: string; description: string; thumbnails: { medium?: { url: string }; default?: { url: string } } } }) => ({
+    channelId: item.id.channelId,
+    name: item.snippet.title,
+    description: item.snippet.description,
+    thumbnailUrl:
+      item.snippet.thumbnails?.medium?.url ??
+      item.snippet.thumbnails?.default?.url ??
+      "",
+    subscriberCount: statsMap.get(item.id.channelId) ?? "0",
+  }));
 }
