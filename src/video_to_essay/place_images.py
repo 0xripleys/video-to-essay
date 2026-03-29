@@ -5,12 +5,14 @@ Used as a library by main.py. Not intended to be run directly.
 """
 
 import base64
+import io
 import json
 import re
 import time
 from pathlib import Path
 
 import anthropic
+from PIL import Image
 
 
 def _stream_message(client: anthropic.Anthropic, **kwargs: object) -> str:
@@ -253,6 +255,17 @@ def annotate_essay(
 # Shared helpers
 # ---------------------------------------------------------------------------
 
+def _resize_for_email(img_bytes: bytes, max_width: int = 800, quality: int = 70) -> bytes:
+    """Resize and compress an image for email embedding."""
+    img = Image.open(io.BytesIO(img_bytes))
+    if img.width > max_width:
+        ratio = max_width / img.width
+        img = img.resize((max_width, int(img.height * ratio)), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=quality, optimize=True)
+    return buf.getvalue()
+
+
 def embed_images(
     essay: str, kept_dir: Path, image_prefix: str = "images/"
 ) -> str:
@@ -266,7 +279,8 @@ def embed_images(
         img_path = kept_dir / filename
         if not img_path.exists():
             return m.group(0)
-        b64 = base64.b64encode(img_path.read_bytes()).decode("utf-8")
+        compressed = _resize_for_email(img_path.read_bytes())
+        b64 = base64.b64encode(compressed).decode("utf-8")
         return f"![{alt}](data:image/jpeg;base64,{b64})"
 
     return re.sub(

@@ -1,6 +1,7 @@
 """Send completed essays via AgentMail."""
 
 import os
+import re
 
 import markdown
 from agentmail import AgentMail
@@ -52,12 +53,18 @@ def send_essay(
 
     html = _essay_to_html(essay_md)
 
-    # Send with essay markdown as attachment
+    # Strip base64 images from plaintext (they can't render there anyway)
+    plaintext = re.sub(
+        r"!\[([^\]]*)\]\(data:image/[^)]+\)",
+        r"[Image: \1]",
+        essay_md,
+    )
+
     client.inboxes.messages.send(
         inbox,
         to=to_email,
         subject=f'Your essay is ready: "{video_title}"',
         html=html,
-        text=essay_md,
+        text=plaintext,
     )
     print(f"Essay emailed to {to_email}")

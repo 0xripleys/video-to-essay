@@ -2,7 +2,10 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { api, apiJson } from "../lib/api";
+import { apiJson, proxyImageUrl } from "../lib/api";
+import NewDropdown from "./NewDropdown";
+import ConvertVideoModal from "./ConvertVideoModal";
+import AddChannelModal from "./AddChannelModal";
 
 interface Video {
   id: string;
@@ -16,9 +19,6 @@ interface Video {
   delivery_sent_at: string | null;
   created_at: string;
 }
-
-const YOUTUBE_URL_RE =
-  /^https?:\/\/(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)[\w-]{11}/;
 
 function relativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -67,16 +67,18 @@ function StatusBadge({ video }: { video: Video }) {
 
 export default function Dashboard() {
   const [videos, setVideos] = useState<Video[]>([]);
-  const [url, setUrl] = useState("");
-  const [error, setError] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [convertOpen, setConvertOpen] = useState(false);
+  const [channelOpen, setChannelOpen] = useState(false);
 
   async function fetchVideos() {
     try {
       const data = await apiJson<Video[]>("/api/videos");
       setVideos(data);
     } catch {
-      // auth redirect handled by apiJson
+      // auth redirect handled
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -95,85 +97,73 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, [videos]);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError("");
-
-    if (!YOUTUBE_URL_RE.test(url)) {
-      setError("Please enter a valid YouTube URL.");
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      await api("/api/videos", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
-      });
-      setUrl("");
-      await fetchVideos();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
-    } finally {
-      setSubmitting(false);
-    }
+  if (loading) {
+    return (
+      <div className="mx-auto max-w-2xl px-6 py-8">
+        <h1 className="text-xl font-bold tracking-tight">Home</h1>
+      </div>
+    );
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-8">
-      {/* Submit bar */}
-      <form onSubmit={handleSubmit} className="flex gap-3">
-        <input
-          type="url"
-          placeholder="Paste YouTube URL..."
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          className="flex-1 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-stone-500 focus:outline-none focus:ring-1 focus:ring-stone-500"
+    <div className="mx-auto max-w-2xl px-6 py-8">
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-bold tracking-tight">Home</h1>
+        <NewDropdown
+          onConvertVideo={() => setConvertOpen(true)}
+          onAddChannel={() => setChannelOpen(true)}
         />
-        <button
-          type="submit"
-          disabled={submitting}
-          className="rounded-lg bg-stone-900 px-5 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
-        >
-          {submitting ? "..." : "Convert"}
-        </button>
-      </form>
-      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
-
-      {/* Video list */}
-      <div className="mt-8">
-        <p className="text-xs font-medium uppercase tracking-wider text-stone-400">
-          Recent Videos
-        </p>
-        <div className="mt-3 space-y-2">
-          {videos.length === 0 && (
-            <p className="py-8 text-center text-sm text-stone-400">
-              No videos yet. Paste a YouTube URL above or subscribe to a channel.
-            </p>
-          )}
-          {videos.map((v) => (
-            <div
-              key={v.id}
-              className="flex items-center justify-between rounded-lg border border-stone-200 bg-white px-4 py-3"
-            >
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-stone-900">
-                  {v.video_title || v.youtube_url}
-                </p>
-                <p className="text-xs text-stone-400">
-                  {v.channel_name || (v.source === "one_off" ? "One-off" : "")}
-                  {v.channel_name || v.source ? " \u00b7 " : ""}
-                  {relativeTime(v.created_at)}
-                </p>
-              </div>
-              <div className="ml-4 flex-shrink-0">
-                <StatusBadge video={v} />
-              </div>
-            </div>
-          ))}
-        </div>
       </div>
+
+      <div className="mt-6">
+        {videos.length === 0 ? (
+          <div className="flex flex-col items-center py-24">
+            <p className="text-sm font-medium text-stone-700">No videos yet</p>
+            <p className="mt-1 text-sm text-stone-400">
+              Convert a video or subscribe to a channel to get started.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {videos.map((v) => (
+              <div
+                key={v.id}
+                className="flex items-center gap-4 rounded-lg border border-stone-200 bg-white px-4 py-3"
+              >
+                <img
+                  src={proxyImageUrl(`https://i.ytimg.com/vi/${v.youtube_video_id}/mqdefault.jpg`)}
+                  alt=""
+                  className="h-12 w-20 flex-shrink-0 rounded object-cover"
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-stone-900">
+                    {v.video_title || v.youtube_url}
+                  </p>
+                  <p className="text-xs text-stone-400">
+                    {v.channel_name || (v.source === "one_off" ? "One-off" : "")}
+                    {v.channel_name || v.source ? " \u00b7 " : ""}
+                    {relativeTime(v.created_at)}
+                  </p>
+                </div>
+                <div className="ml-4 flex-shrink-0">
+                  <StatusBadge video={v} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <ConvertVideoModal
+        open={convertOpen}
+        onClose={() => setConvertOpen(false)}
+        onConverted={() => fetchVideos()}
+      />
+      <AddChannelModal
+        open={channelOpen}
+        onClose={() => setChannelOpen(false)}
+        onSubscribed={() => fetchVideos()}
+      />
     </div>
   );
 }

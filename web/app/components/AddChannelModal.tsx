@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, apiJson } from "../lib/api";
+import { api, apiJson, proxyImageUrl } from "../lib/api";
 
 interface ChannelResult {
   channelId: string;
@@ -181,7 +181,7 @@ export default function AddChannelModal({
           <div className="p-6 text-center">
             {selected.thumbnailUrl && (
               <img
-                src={selected.thumbnailUrl}
+                src={proxyImageUrl(selected.thumbnailUrl)}
                 alt={selected.name}
                 className="mx-auto h-14 w-14 rounded-full object-cover"
               />
@@ -273,7 +273,7 @@ export default function AddChannelModal({
                 >
                   {r.thumbnailUrl && (
                     <img
-                      src={r.thumbnailUrl}
+                      src={proxyImageUrl(r.thumbnailUrl)}
                       alt={r.name}
                       className="h-9 w-9 flex-shrink-0 rounded-full object-cover"
                     />

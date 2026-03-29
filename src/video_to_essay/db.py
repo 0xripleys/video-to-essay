@@ -403,31 +403,16 @@ def create_delivery(
         return None
 
 
-def get_pending_one_off_deliveries() -> list[dict[str, Any]]:
-    """One-off deliveries where the video is processed but email not yet sent."""
-    with _connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT d.*, v.youtube_video_id, v.video_title, u.email
-            FROM deliveries d
-            JOIN videos v ON v.id = d.video_id
-            JOIN users u ON u.id = d.user_id
-            WHERE d.source = 'one_off'
-              AND d.sent_at IS NULL
-              AND d.error IS NULL
-              AND v.processed_at IS NOT NULL
-            """
-        ).fetchall()
-    return [dict(r) for r in rows]
+def create_subscription_deliveries() -> int:
+    """Create delivery rows for processed subscription videos that haven't been delivered yet.
 
-
-def get_pending_subscription_deliveries() -> list[dict[str, Any]]:
-    """Subscription videos that are processed but not yet delivered to subscribers."""
+    Returns the number of rows created.
+    """
     with _connect() as conn:
-        rows = conn.execute(
+        cur = conn.execute(
             """
-            SELECT v.id as video_id, v.youtube_video_id, v.video_title,
-                   u.id as user_id, u.email, s.id as subscription_id
+            INSERT INTO deliveries (id, video_id, user_id, source, subscription_id, created_at)
+            SELECT gen_random_uuid()::text, v.id, u.id, 'subscription', s.id, NOW()
             FROM videos v
             JOIN channels c ON c.id = v.channel_id
             JOIN subscriptions s ON s.channel_id = c.id AND s.active = TRUE
@@ -435,9 +420,29 @@ def get_pending_subscription_deliveries() -> list[dict[str, Any]]:
             LEFT JOIN deliveries d ON d.video_id = v.id AND d.user_id = u.id
             WHERE v.processed_at IS NOT NULL
               AND d.id IS NULL
+            ON CONFLICT DO NOTHING
+            """
+        )
+        conn.commit()
+        return cur.rowcount
+
+
+def get_pending_deliveries() -> list[dict[str, Any]]:
+    """Deliveries where the video is processed but email not yet sent."""
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT d.*, v.youtube_video_id, v.video_title, u.email
+            FROM deliveries d
+            JOIN videos v ON v.id = d.video_id
+            JOIN users u ON u.id = d.user_id
+            WHERE d.sent_at IS NULL
+              AND d.error IS NULL
+              AND v.processed_at IS NOT NULL
             """
         ).fetchall()
     return [dict(r) for r in rows]
+
 
 
 def mark_delivery_sent(delivery_id: str) -> None:

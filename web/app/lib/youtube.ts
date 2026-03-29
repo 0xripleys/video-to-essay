@@ -6,6 +6,17 @@ export interface YouTubeChannelInfo {
   subscriberCount?: string;
 }
 
+function ensureHttps(url: string): string {
+  if (url.startsWith("//")) return `https:${url}`;
+  if (url.startsWith("http://")) return url.replace("http://", "https://");
+  return url;
+}
+
+function extractThumbnail(thumbnails: { medium?: { url: string }; default?: { url: string } }): string {
+  const raw = thumbnails?.medium?.url ?? thumbnails?.default?.url ?? "";
+  return raw ? ensureHttps(raw) : "";
+}
+
 export async function resolveChannel(
   input: string,
 ): Promise<YouTubeChannelInfo | null> {
@@ -61,11 +72,53 @@ async function fetchAndParse(url: string): Promise<YouTubeChannelInfo | null> {
     channelId: item.id,
     name: item.snippet.title,
     description: item.snippet.description,
-    thumbnailUrl:
-      item.snippet.thumbnails?.medium?.url ??
-      item.snippet.thumbnails?.default?.url ??
-      "",
+    thumbnailUrl: extractThumbnail(item.snippet.thumbnails),
   };
+}
+
+export interface YouTubeVideoInfo {
+  videoId: string;
+  title: string;
+  channelTitle: string;
+  thumbnailUrl: string;
+  viewCount?: string;
+  publishedAt?: string;
+}
+
+export async function searchVideos(
+  query: string,
+): Promise<YouTubeVideoInfo[]> {
+  const apiKey = process.env.YOUTUBE_API_KEY;
+  if (!apiKey) throw new Error("YOUTUBE_API_KEY must be set");
+
+  const searchUrl = `https://www.googleapis.com/youtube/v3/search?q=${encodeURIComponent(query)}&type=video&maxResults=5&part=snippet&key=${apiKey}`;
+  const searchRes = await fetch(searchUrl);
+  if (!searchRes.ok) return [];
+
+  const searchData = await searchRes.json();
+  const items = searchData.items;
+  if (!items?.length) return [];
+
+  // Fetch view counts for all videos in one request
+  const videoIds = items.map((item: { id: { videoId: string } }) => item.id.videoId).join(",");
+  const statsUrl = `https://www.googleapis.com/youtube/v3/videos?id=${videoIds}&part=statistics&key=${apiKey}`;
+  const statsRes = await fetch(statsUrl);
+  const statsMap = new Map<string, string>();
+  if (statsRes.ok) {
+    const statsData = await statsRes.json();
+    for (const v of statsData.items ?? []) {
+      statsMap.set(v.id, v.statistics?.viewCount ?? "0");
+    }
+  }
+
+  return items.map((item: { id: { videoId: string }; snippet: { title: string; channelTitle: string; publishedAt: string; thumbnails: { medium?: { url: string }; default?: { url: string } } } }) => ({
+    videoId: item.id.videoId,
+    title: item.snippet.title,
+    channelTitle: item.snippet.channelTitle,
+    thumbnailUrl: extractThumbnail(item.snippet.thumbnails),
+    viewCount: statsMap.get(item.id.videoId) ?? "0",
+    publishedAt: item.snippet.publishedAt,
+  }));
 }
 
 export async function searchChannels(
@@ -82,26 +135,25 @@ export async function searchChannels(
   const items = searchData.items;
   if (!items?.length) return [];
 
-  // Fetch subscriber counts for all channels in one request
+  // Fetch subscriber counts and proper channel thumbnails in one request
   const channelIds = items.map((item: { id: { channelId: string } }) => item.id.channelId).join(",");
-  const statsUrl = `https://www.googleapis.com/youtube/v3/channels?id=${channelIds}&part=statistics&key=${apiKey}`;
-  const statsRes = await fetch(statsUrl);
+  const detailsUrl = `https://www.googleapis.com/youtube/v3/channels?id=${channelIds}&part=snippet,statistics&key=${apiKey}`;
+  const detailsRes = await fetch(detailsUrl);
   const statsMap = new Map<string, string>();
-  if (statsRes.ok) {
-    const statsData = await statsRes.json();
-    for (const ch of statsData.items ?? []) {
+  const thumbMap = new Map<string, string>();
+  if (detailsRes.ok) {
+    const detailsData = await detailsRes.json();
+    for (const ch of detailsData.items ?? []) {
       statsMap.set(ch.id, ch.statistics?.subscriberCount ?? "0");
+      thumbMap.set(ch.id, extractThumbnail(ch.snippet?.thumbnails ?? {}));
     }
   }
 
-  return items.map((item: { id: { channelId: string }; snippet: { title: string; description: string; thumbnails: { medium?: { url: string }; default?: { url: string } } } }) => ({
+  return items.map((item: { id: { channelId: string }; snippet: { title: string; description: string } }) => ({
     channelId: item.id.channelId,
     name: item.snippet.title,
     description: item.snippet.description,
-    thumbnailUrl:
-      item.snippet.thumbnails?.medium?.url ??
-      item.snippet.thumbnails?.default?.url ??
-      "",
+    thumbnailUrl: thumbMap.get(item.id.channelId) ?? "",
     subscriberCount: statsMap.get(item.id.channelId) ?? "0",
   }));
 }

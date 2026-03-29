@@ -1,12 +1,14 @@
 """Deliver worker: sends essay emails for processed videos."""
 
+import logging
 import os
-import traceback
 import time
 from pathlib import Path
 
 from . import db
 from .email_sender import send_essay
+
+logger = logging.getLogger(__name__)
 
 RUNS_DIR = Path("runs")
 
@@ -23,65 +25,47 @@ def _get_essay(youtube_video_id: str) -> str | None:
     return None
 
 
-def _deliver_one_offs() -> None:
-    """Send emails for one-off deliveries."""
-    deliveries = db.get_pending_one_off_deliveries()
+def _deliver() -> None:
+    """Send emails for all pending deliveries."""
+    deliveries = db.get_pending_deliveries()
+    if deliveries:
+        logger.info("Found %d pending deliveries", len(deliveries))
     for d in deliveries:
+        did, email, vid = d["id"], d["email"], d["youtube_video_id"]
         try:
-            essay = _get_essay(d["youtube_video_id"])
+            essay = _get_essay(vid)
             if not essay:
-                db.mark_delivery_failed(d["id"], "Essay file not found")
+                logger.warning("delivery=%s: essay not found for video %s, marking failed", did, vid)
+                db.mark_delivery_failed(did, "Essay file not found")
                 continue
 
             title = d.get("video_title") or "Untitled Video"
-            send_essay(d["email"], title, essay)
-            db.mark_delivery_sent(d["id"])
-            print(f"Deliver: sent to {d['email']} ({title})")
+            logger.info("delivery=%s: sending to %s (%s)", did, email, title)
+            send_essay(email, title, essay)
+            db.mark_delivery_sent(did)
+            logger.info("delivery=%s: sent successfully", did)
         except Exception:
-            traceback.print_exc()
-            db.mark_delivery_failed(d["id"], traceback.format_exc())
-            print(f"Deliver: failed sending to {d['email']}")
-
-
-def _deliver_subscriptions() -> None:
-    """Send emails for subscription deliveries (computed at delivery time)."""
-    pending = db.get_pending_subscription_deliveries()
-    for p in pending:
-        try:
-            essay = _get_essay(p["youtube_video_id"])
-            if not essay:
-                continue  # Video processed but essay not on disk yet — retry later
-
-            title = p.get("video_title") or "Untitled Video"
-
-            # Create delivery record (dedup via unique constraint)
-            delivery_id = db.create_delivery(
-                video_id=p["video_id"],
-                user_id=p["user_id"],
-                source="subscription",
-                subscription_id=p.get("subscription_id"),
-            )
-            if delivery_id is None:
-                continue  # Already delivered
-
-            send_essay(p["email"], title, essay)
-            db.mark_delivery_sent(delivery_id)
-            print(f"Deliver: sent subscription essay to {p['email']} ({title})")
-        except Exception:
-            traceback.print_exc()
-            print(f"Deliver: failed sending subscription essay to {p.get('email')}")
+            logger.exception("delivery=%s: failed sending to %s", did, email)
+            db.mark_delivery_failed(did, "Send failed")
 
 
 def deliver_loop(poll_interval: float = 15.0) -> None:
     """Poll for pending deliveries and send emails."""
-    print(f"Deliver worker started (polling every {poll_interval}s)")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    logger.info("Deliver worker started (polling every %.1fs)", poll_interval)
     for key in ("DATABASE_URL", "AGENTMAIL_API_KEY", "AGENTMAIL_INBOX_ID"):
         val = os.environ.get(key)
-        print(f"  {key}: {'set' if val else 'NOT SET'}")
+        logger.info("  %s: %s", key, "set" if val else "NOT SET")
     while True:
         try:
-            _deliver_one_offs()
-            _deliver_subscriptions()
+            created = db.create_subscription_deliveries()
+            if created:
+                logger.info("Created %d subscription deliveries", created)
+            _deliver()
         except Exception:
-            traceback.print_exc()
+            logger.exception("Unexpected error in deliver loop")
         time.sleep(poll_interval)
