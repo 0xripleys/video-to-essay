@@ -8,6 +8,7 @@ User=root
 WorkingDirectory=/root/video-to-essay
 EnvironmentFile=/root/video-to-essay/.env
 Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/root/.deno/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=/root/.local/bin/uv run python -c "from video_to_essay.download_worker import download_loop; download_loop()"
 Restart=always
 RestartSec=5
