@@ -3,7 +3,7 @@ import "./globals.css";
 import AppShell from "./components/AppShell";
 
 export const metadata: Metadata = {
-  title: "Surat",
+  title: "Scrivi",
   description: "Turn YouTube videos into illustrated essays, delivered to your inbox.",
 };
 

@@ -6,12 +6,7 @@ export default function Landing() {
         <a href="/" className="text-[15px] font-semibold tracking-tight text-stone-900">
           Scrivi
         </a>
-        <a
-          href="/api/auth/login"
-          className="text-sm text-stone-500 transition-colors hover:text-stone-900"
-        >
-          Sign in
-        </a>
+        <div />
       </nav>
 
       {/* Hero */}

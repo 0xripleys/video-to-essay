@@ -25,7 +25,7 @@ function Sidebar() {
   return (
     <aside className="flex w-52 flex-shrink-0 flex-col border-r border-stone-200 bg-stone-50 px-3 pb-6 pt-4">
       <a href="/" className="mb-6 px-2 text-[15px] font-semibold tracking-tight text-stone-900">
-        Surat
+        Scrivi
       </a>
 
       <nav className="flex flex-1 flex-col gap-0.5">
