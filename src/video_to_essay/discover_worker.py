@@ -1,40 +1,27 @@
-"""Discover worker: polls YouTube RSS feeds for new videos on subscribed channels."""
+"""Discover worker: polls YouTube Data API for new videos on subscribed channels."""
 
 import os
 import traceback
 import time
 from datetime import datetime, timezone
-from xml.etree import ElementTree
 
 import httpx
 
 from . import db
 
-YOUTUBE_RSS_URL = "https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
-ATOM_NS = "{http://www.w3.org/2005/Atom}"
-YT_NS = "{http://www.youtube.com/xml/schemas/2015}"
+PLAYLIST_ITEMS_URL = "https://www.googleapis.com/youtube/v3/playlistItems"
 
 
-def _check_channel(channel: dict) -> int:
-    """Fetch RSS feed for a channel and insert any new videos. Returns count of new videos."""
+def _uploads_playlist_id(channel_id: str) -> str:
+    """Convert a channel ID (UC...) to its uploads playlist ID (UU...)."""
+    return "UU" + channel_id[2:]
+
+
+def _check_channel(channel: dict, api_key: str) -> int:
+    """Fetch uploads playlist for a channel and insert any new videos. Returns count of new videos."""
     youtube_channel_id = channel["youtube_channel_id"]
-    url = YOUTUBE_RSS_URL.format(channel_id=youtube_channel_id)
+    playlist_id = _uploads_playlist_id(youtube_channel_id)
 
-    proxy_url = os.environ.get("PROXY_URL")
-    with httpx.Client(proxy=proxy_url, timeout=30) as client:
-        resp = client.get(url)
-    resp.raise_for_status()
-
-    root = ElementTree.fromstring(resp.text)
-
-    # Update channel name from feed title if it's still a placeholder
-    feed_title = root.findtext(f"{ATOM_NS}title")
-    if feed_title and channel["name"] == youtube_channel_id:
-        db.update_channel_name(channel["id"], feed_title)
-
-    # Only add videos published after the channel was added to our system.
-    # On first check (last_checked_at is None), use created_at as the cutoff
-    # so we don't backfill the entire RSS feed.
     cutoff = channel.get("last_checked_at") or channel["created_at"]
     if isinstance(cutoff, str):
         cutoff = datetime.fromisoformat(cutoff)
@@ -42,35 +29,59 @@ def _check_channel(channel: dict) -> int:
         cutoff = cutoff.replace(tzinfo=timezone.utc)
 
     new_count = 0
-    for entry in root.findall(f"{ATOM_NS}entry"):
-        video_id = entry.findtext(f"{YT_NS}videoId")
-        if not video_id:
-            continue
+    page_token: str | None = None
 
-        # Skip videos published before we started tracking this channel
-        published_str = entry.findtext(f"{ATOM_NS}published")
-        if published_str:
-            published = datetime.fromisoformat(published_str)
+    while True:
+        params: dict = {
+            "playlistId": playlist_id,
+            "part": "snippet",
+            "maxResults": 50,
+            "key": api_key,
+        }
+        if page_token:
+            params["pageToken"] = page_token
+
+        resp = httpx.get(PLAYLIST_ITEMS_URL, params=params, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+
+        # Update channel name from first result if still a placeholder
+        if channel["name"] == youtube_channel_id and data.get("items"):
+            channel_title = data["items"][0]["snippet"].get("channelTitle")
+            if channel_title:
+                db.update_channel_name(channel["id"], channel_title)
+
+        found_old = False
+        for item in data.get("items", []):
+            snippet = item["snippet"]
+            video_id = snippet["resourceId"]["videoId"]
+
+            published = datetime.fromisoformat(snippet["publishedAt"])
             if published.tzinfo is None:
                 published = published.replace(tzinfo=timezone.utc)
             if published <= cutoff:
+                found_old = True
+                break
+
+            existing = db.get_video_by_youtube_id(video_id)
+            if existing:
                 continue
 
-        # Check if we already have this video
-        existing = db.get_video_by_youtube_id(video_id)
-        if existing:
-            continue
+            title = snippet.get("title")
+            video_url = f"https://www.youtube.com/watch?v={video_id}"
 
-        title = entry.findtext(f"{ATOM_NS}title")
-        video_url = f"https://www.youtube.com/watch?v={video_id}"
+            db.create_video(
+                youtube_video_id=video_id,
+                youtube_url=video_url,
+                channel_id=channel["id"],
+                video_title=title,
+            )
+            new_count += 1
 
-        db.create_video(
-            youtube_video_id=video_id,
-            youtube_url=video_url,
-            channel_id=channel["id"],
-            video_title=title,
-        )
-        new_count += 1
+        # Stop paginating if we hit old videos or there are no more pages
+        if found_old or "nextPageToken" not in data:
+            break
+        page_token = data["nextPageToken"]
 
     db.update_channel_checked(channel["id"])
     return new_count
@@ -79,7 +90,11 @@ def _check_channel(channel: dict) -> int:
 def discover_loop(poll_interval: float = 60.0) -> None:
     """Poll for channels due for a check and discover new videos."""
     print(f"Discover worker started (polling every {poll_interval}s)")
-    for key in ("DATABASE_URL", "PROXY_URL"):
+    api_key = os.environ.get("YOUTUBE_API_KEY")
+    if not api_key:
+        print("  YOUTUBE_API_KEY: NOT SET — discover worker cannot run")
+        return
+    for key in ("DATABASE_URL", "YOUTUBE_API_KEY"):
         val = os.environ.get(key)
         print(f"  {key}: {'set' if val else 'NOT SET'}")
     while True:
@@ -87,7 +102,7 @@ def discover_loop(poll_interval: float = 60.0) -> None:
             channels = db.get_channels_due_for_check()
             for channel in channels:
                 try:
-                    new = _check_channel(channel)
+                    new = _check_channel(channel, api_key)
                     if new:
                         print(f"Discover: {new} new video(s) from {channel['name']}")
                 except Exception:
