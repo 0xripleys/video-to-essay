@@ -20,7 +20,11 @@ def _check_channel(channel: dict) -> int:
     youtube_channel_id = channel["youtube_channel_id"]
     url = YOUTUBE_RSS_URL.format(channel_id=youtube_channel_id)
 
-    resp = httpx.get(url, timeout=30)
+    proxy_url = os.environ.get("PROXY_URL")
+    client_kwargs: dict = {"timeout": 30}
+    if proxy_url:
+        client_kwargs["proxy"] = proxy_url
+    resp = httpx.get(url, **client_kwargs)
     resp.raise_for_status()
 
     root = ElementTree.fromstring(resp.text)
