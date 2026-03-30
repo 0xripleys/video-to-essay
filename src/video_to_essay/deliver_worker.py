@@ -36,8 +36,9 @@ def _deliver() -> None:
                 continue
 
             title = d.get("video_title") or "Untitled Video"
+            channel_name = d.get("channel_name")
             logger.info("delivery=%s: sending to %s (%s)", did, email, title)
-            send_essay(email, title, essay)
+            send_essay(email, title, essay, channel_name=channel_name)
             db.mark_delivery_sent(did)
             logger.info("delivery=%s: sent successfully", did)
         except Exception:

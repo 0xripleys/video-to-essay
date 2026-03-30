@@ -432,10 +432,12 @@ def get_pending_deliveries() -> list[dict[str, Any]]:
     with _connect() as conn:
         rows = conn.execute(
             """
-            SELECT d.*, v.youtube_video_id, v.video_title, u.email
+            SELECT d.*, v.youtube_video_id, v.video_title, u.email,
+                   c.name as channel_name
             FROM deliveries d
             JOIN videos v ON v.id = d.video_id
             JOIN users u ON u.id = d.user_id
+            LEFT JOIN channels c ON c.id = v.channel_id
             WHERE d.sent_at IS NULL
               AND d.error IS NULL
               AND v.processed_at IS NOT NULL

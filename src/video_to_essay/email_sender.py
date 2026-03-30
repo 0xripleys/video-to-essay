@@ -2,6 +2,7 @@
 
 import os
 import re
+import textwrap
 
 import markdown
 from agentmail import AgentMail
@@ -24,17 +25,11 @@ def _essay_to_html(essay_md: str) -> str:
 <html>
 <head>
 <meta charset="utf-8">
-<style>
-  body {{ font-family: Georgia, 'Times New Roman', serif; max-width: 700px; margin: 0 auto; padding: 20px; line-height: 1.7; color: #333; }}
-  h1 {{ font-size: 1.8em; margin-bottom: 0.3em; }}
-  h2 {{ font-size: 1.4em; margin-top: 1.5em; }}
-  img {{ max-width: 100%; height: auto; border-radius: 4px; margin: 1em 0; }}
-  em {{ color: #666; }}
-  blockquote {{ border-left: 3px solid #ccc; margin-left: 0; padding-left: 1em; color: #555; }}
-</style>
 </head>
 <body>
+<div style="font-family: -apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif; max-width: 700px; margin: 0 auto; padding: 20px; font-size: 16px; line-height: 1.7; color: #333;">
 {html_body}
+</div>
 </body>
 </html>"""
 
@@ -44,6 +39,7 @@ def send_essay(
     video_title: str,
     essay_md: str,
     inbox_id: str | None = None,
+    channel_name: str | None = None,
 ) -> None:
     """Send the completed essay to the user's email."""
     client = _get_client()
@@ -60,10 +56,19 @@ def send_essay(
         essay_md,
     )
 
+    # Wrap long lines at 80 chars, preserving blank lines and headings
+    wrapped_lines: list[str] = []
+    for line in plaintext.splitlines():
+        if not line.strip() or line.startswith("#") or line.startswith(">"):
+            wrapped_lines.append(line)
+        else:
+            wrapped_lines.append(textwrap.fill(line, width=80))
+    plaintext = "\n".join(wrapped_lines)
+
     client.inboxes.messages.send(
         inbox,
         to=to_email,
-        subject=f'Your essay is ready: "{video_title}"',
+        subject=f"{channel_name}: {video_title}" if channel_name else video_title,
         html=html,
         text=plaintext,
     )
