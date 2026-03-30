@@ -21,10 +21,8 @@ def _check_channel(channel: dict) -> int:
     url = YOUTUBE_RSS_URL.format(channel_id=youtube_channel_id)
 
     proxy_url = os.environ.get("PROXY_URL")
-    client_kwargs: dict = {"timeout": 30}
-    if proxy_url:
-        client_kwargs["proxy"] = proxy_url
-    resp = httpx.get(url, **client_kwargs)
+    with httpx.Client(proxy=proxy_url, timeout=30) as client:
+        resp = client.get(url)
     resp.raise_for_status()
 
     root = ElementTree.fromstring(resp.text)
@@ -81,7 +79,7 @@ def _check_channel(channel: dict) -> int:
 def discover_loop(poll_interval: float = 60.0) -> None:
     """Poll for channels due for a check and discover new videos."""
     print(f"Discover worker started (polling every {poll_interval}s)")
-    for key in ("DATABASE_URL",):
+    for key in ("DATABASE_URL", "PROXY_URL"):
         val = os.environ.get(key)
         print(f"  {key}: {'set' if val else 'NOT SET'}")
     while True:
