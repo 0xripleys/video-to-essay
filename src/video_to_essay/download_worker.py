@@ -19,6 +19,11 @@ def _download_one(video: dict) -> None:
     run_dir = RUNS_DIR / video_id / "00_download"
     run_dir.mkdir(parents=True, exist_ok=True)
 
+    # Clean up partial downloads
+    for part_file in run_dir.glob("video.*.part"):
+        print(f"  [{video_id}] Removing partial download: {part_file.name}")
+        part_file.unlink()
+
     # Skip if already downloaded locally
     existing = sorted(run_dir.glob("video.*"))
     if existing:
