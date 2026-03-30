@@ -60,6 +60,7 @@ def download_loop(poll_interval: float = 10.0) -> None:
         print(f"  {key}: {'set' if val else 'NOT SET'}")
     while True:
         try:
+            print("Polling...")
             videos = db.get_videos_pending_download()
             if videos:
                 print(f"Found {len(videos)} video(s) pending download")
