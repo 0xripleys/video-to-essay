@@ -24,8 +24,8 @@ def _download_one(video: dict) -> None:
         print(f"  [{video_id}] Removing partial download: {part_file.name}")
         part_file.unlink()
 
-    # Skip if already downloaded locally
-    existing = sorted(run_dir.glob("video.*"))
+    # Skip if already downloaded locally (exclude .part files)
+    existing = [f for f in sorted(run_dir.glob("video.*")) if not f.name.endswith(".part")]
     if existing:
         print(f"  [{video_id}] Video already exists locally, skipping download")
     else:

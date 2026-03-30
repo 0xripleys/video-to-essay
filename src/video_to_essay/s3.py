@@ -53,7 +53,7 @@ def upload_run(video_id: str, step_dirs: list[str] | None = None) -> None:
         if not d.exists():
             continue
         for file_path in d.rglob("*"):
-            if not file_path.is_file():
+            if not file_path.is_file() or file_path.name.endswith(".part"):
                 continue
             key = f"runs/{video_id}/{file_path.relative_to(base)}"
             client.upload_file(
