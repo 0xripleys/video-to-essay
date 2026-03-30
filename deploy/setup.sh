@@ -6,16 +6,34 @@ set -euo pipefail
 #   or:  ssh root@your-server 'bash -s' < deploy/setup.sh
 
 echo "=== Installing system dependencies ==="
-apt-get update -qq
-apt-get install -y -qq ffmpeg unzip curl git
+PACKAGES=""
+for pkg in ffmpeg unzip curl git; do
+    if ! command -v "$pkg" &>/dev/null; then
+        PACKAGES="$PACKAGES $pkg"
+    fi
+done
+if [ -n "$PACKAGES" ]; then
+    apt-get update -qq
+    apt-get install -y -qq $PACKAGES
+else
+    echo "All system packages already installed"
+fi
 
 echo "=== Installing uv ==="
-curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
+if ! command -v uv &>/dev/null; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+else
+    echo "uv already installed"
+fi
 
 echo "=== Installing deno ==="
-curl -fsSL https://deno.land/install.sh | sh
 export PATH="$HOME/.deno/bin:$PATH"
+if ! command -v deno &>/dev/null; then
+    curl -fsSL https://deno.land/install.sh | sh
+else
+    echo "deno already installed"
+fi
 
 echo "=== Cloning repo ==="
 INSTALL_DIR="$HOME/video-to-essay"

@@ -5,6 +5,7 @@ Used as a library by main.py. Not intended to be run directly.
 """
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -322,6 +323,9 @@ def fetch_video_metadata(
     ]
     if cookies_path:
         cmd.extend(["--cookies", cookies_path])
+    proxy_url = os.environ.get("PROXY_URL")
+    if proxy_url:
+        cmd.extend(["--proxy", proxy_url])
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     if result.returncode != 0:
@@ -355,6 +359,9 @@ def download_video(
     ]
     if cookies_path:
         cmd.extend(["--cookies", cookies_path])
+    proxy_url = os.environ.get("PROXY_URL")
+    if proxy_url:
+        cmd.extend(["--proxy", proxy_url])
 
     print(f"Downloading video {video_id}...")
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
