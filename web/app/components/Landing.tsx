@@ -1,57 +1,10 @@
-"use client";
-
-import { useState } from "react";
-import { proxyImageUrl } from "../lib/api";
-
 export default function Landing() {
-  const [url, setUrl] = useState("");
-  const [error, setError] = useState("");
-  const [preview, setPreview] = useState<{
-    videoId: string;
-    title: string;
-    channelTitle: string;
-    thumbnailUrl: string;
-  } | null>(null);
-  const [resolving, setResolving] = useState(false);
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError("");
-    setPreview(null);
-
-    const trimmed = url.trim();
-    if (!trimmed) return;
-
-    if (!trimmed.includes("youtube.com") && !trimmed.includes("youtu.be")) {
-      setError("Please enter a YouTube URL.");
-      return;
-    }
-
-    const videoIdMatch = trimmed.match(/(?:v=|youtu\.be\/)([\w-]{11})/);
-    if (!videoIdMatch) {
-      setError("Couldn't find a video at this URL.");
-      return;
-    }
-
-    setResolving(true);
-    const videoId = videoIdMatch[1];
-
-    // Show preview with thumbnail (YouTube thumbnail URLs are predictable)
-    setPreview({
-      videoId,
-      title: "YouTube Video",
-      channelTitle: "",
-      thumbnailUrl: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
-    });
-    setResolving(false);
-  }
-
   return (
     <div className="flex min-h-screen flex-col bg-stone-50">
       {/* Nav */}
       <nav className="flex items-center justify-between px-8 py-5">
         <a href="/" className="text-[15px] font-semibold tracking-tight text-stone-900">
-          Surat
+          Scrivi
         </a>
         <a
           href="/api/auth/login"
@@ -62,148 +15,121 @@ export default function Landing() {
       </nav>
 
       {/* Hero */}
-      <div className="flex flex-1 flex-col items-center px-8 pt-24">
+      <div className="flex flex-col items-center px-8 pt-24">
         <div className="w-full max-w-lg text-center">
           <h1 className="text-3xl font-bold leading-tight tracking-tight text-stone-900">
             Turn YouTube videos into polished transcripts — delivered to your inbox
           </h1>
           <p className="mx-auto mt-4 max-w-md text-[15px] leading-relaxed text-stone-500">
-            Paste a link for a one-off, or subscribe to a channel to get every new video automatically.
+            Paste a link for a one-off, or subscribe to a channel to get every new video
+            automatically.
           </p>
-
-          {/* URL Input */}
-          <form onSubmit={handleSubmit} className="mt-6 flex gap-2">
-            <input
-              type="text"
-              placeholder="Paste a YouTube URL..."
-              value={url}
-              onChange={(e) => {
-                setUrl(e.target.value);
-                setError("");
-                setPreview(null);
-              }}
-              className="flex-1 rounded-lg border border-stone-300 bg-white px-4 py-2.5 text-sm shadow-sm focus:border-stone-500 focus:outline-none focus:ring-1 focus:ring-stone-500"
-            />
-            <button
-              type="submit"
-              disabled={resolving}
-              className="rounded-lg bg-stone-900 px-6 py-2.5 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
-            >
-              {resolving ? "..." : "Convert"}
-            </button>
-          </form>
-          {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
-
-          {/* Video preview + sign-in prompt */}
-          {preview && (
-            <div className="mt-4 rounded-lg border border-stone-200 bg-white p-4">
-              <div className="flex items-center gap-3">
-                <img
-                  src={proxyImageUrl(preview.thumbnailUrl)}
-                  alt={preview.title}
-                  className="h-16 w-28 flex-shrink-0 rounded object-cover"
-                />
-                <div className="min-w-0 flex-1 text-left">
-                  <p className="truncate text-sm font-medium text-stone-900">
-                    {preview.title}
-                  </p>
-                  {preview.channelTitle && (
-                    <p className="text-xs text-stone-500">{preview.channelTitle}</p>
-                  )}
-                </div>
-              </div>
-              <a
-                href="/api/auth/login"
-                className="mt-3 inline-flex w-full items-center justify-center rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800"
-              >
-                Sign in to start converting
-              </a>
-            </div>
-          )}
+          <a
+            href="/api/auth/login"
+            className="mt-6 inline-block rounded-lg bg-stone-900 px-6 py-2.5 text-sm font-medium text-white hover:bg-stone-800"
+          >
+            Get started
+          </a>
         </div>
+      </div>
 
-        {/* Side-by-side example */}
-        <div className="mt-16 flex w-full max-w-xl items-stretch justify-center gap-5">
-          {/* Video card */}
-          <div className="flex-1">
-            <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-stone-400">
-              Video
+      {/* Example essay card */}
+      <div className="mx-auto mt-16 w-full max-w-[650px] px-8 pb-16">
+        <div className="relative overflow-hidden rounded-lg border border-stone-200 bg-white shadow-sm">
+          {/* Video source */}
+          <img
+            src="/example/thumbnail.jpg"
+            alt="Markets Weekly March 28, 2026"
+            className="aspect-video w-full object-cover"
+          />
+          <div className="border-b border-stone-100 px-6 py-3 sm:px-8">
+            <p className="text-sm font-semibold text-stone-800">
+              Markets Weekly March 28, 2026
             </p>
-            <div className="overflow-hidden rounded-lg border border-stone-200 bg-white shadow-sm">
-              <div className="flex aspect-video items-center justify-center bg-gradient-to-br from-stone-100 to-stone-200">
-                <svg
-                  width="32"
-                  height="32"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  className="text-stone-400"
-                >
-                  <path
-                    d="M8 5.14v13.72a1 1 0 001.5.86l11-6.86a1 1 0 000-1.72l-11-6.86a1 1 0 00-1.5.86z"
-                    fill="currentColor"
-                    opacity="0.5"
-                  />
-                </svg>
-              </div>
-              <div className="p-3">
-                <p className="text-xs font-semibold text-stone-800">
-                  How Transformers Changed AI
-                </p>
-                <p className="mt-0.5 text-[10px] text-stone-400">
-                  Tech Channel &middot; 245K views
-                </p>
-              </div>
-            </div>
+            <p className="mt-0.5 text-xs text-stone-400">Joseph Wang</p>
           </div>
 
-          {/* Arrow */}
-          <div className="flex flex-shrink-0 items-center pt-6">
-            <svg
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              className="text-stone-300"
-            >
-              <path
-                d="M5 12h14M13 6l6 6-6 6"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </div>
-
-          {/* Transcript card */}
-          <div className="flex-1">
-            <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-stone-400">
-              Transcript
-            </p>
-            <div className="overflow-hidden rounded-lg border border-stone-200 bg-white p-4 shadow-sm">
-              <p
-                className="text-sm font-semibold leading-tight text-stone-800"
+          {/* Essay content */}
+          <div className="p-6 sm:p-8">
+            <article>
+              <h1
+                className="text-2xl font-bold leading-tight tracking-tight text-stone-900"
                 style={{ fontFamily: "'Georgia', serif" }}
               >
-                How Transformers Changed AI
+                Markets Weekly: The Middle East War and What It Means for Everything
+              </h1>
+
+              <p className="mt-4 text-[15px] leading-relaxed text-stone-700">
+                Hello, my friends. So today is March 28 and this is Markets Weekly.
               </p>
-              <div className="mt-2 space-y-1.5">
-                <div className="h-1.5 w-full rounded-full bg-stone-100" />
-                <div className="h-1.5 w-[88%] rounded-full bg-stone-100" />
-              </div>
-              <div className="mt-3 h-10 rounded bg-gradient-to-br from-stone-100 to-stone-150 ring-1 ring-stone-200/50" />
-              <p
-                className="mt-1 text-[8px] italic text-stone-400"
+
+              <p className="mt-3 text-[15px] leading-relaxed text-stone-700">
+                For weeks, we&apos;ve been talking about how the S&amp;P 500 has been losing
+                momentum. Last week, it looks like it&apos;s outright breaking down. Coincidentally,
+                next week is the one year anniversary of Liberation Day. And as what we all recall,
+                that was a very very exciting time in the markets.
+              </p>
+
+              <p className="mt-3 text-[15px] leading-relaxed text-stone-700">
+                So today, there&apos;s really only one thing to talk about, one thing that
+                matters&mdash;the war in the Middle East.
+              </p>
+
+              <h2
+                className="mt-8 text-lg font-bold text-stone-900"
                 style={{ fontFamily: "'Georgia', serif" }}
               >
-                Figure 1: Architecture diagram
+                The Economic and Financial Fallout
+              </h2>
+
+              <p className="mt-3 text-[15px] leading-relaxed text-stone-700">
+                <strong>
+                  The global economy has been nuked and we are moving into the phase where, due to
+                  radiation sickness, we are not feeling well.
+                </strong>
               </p>
-              <div className="mt-2 space-y-1.5">
-                <div className="h-1.5 w-full rounded-full bg-stone-100" />
-                <div className="h-1.5 w-[75%] rounded-full bg-stone-100" />
-              </div>
-            </div>
+
+              <p className="mt-3 text-[15px] leading-relaxed text-stone-700">
+                The Strait of Hormuz remains closed. There&apos;s only a few ships passing through
+                each day. Those ships seem to largely be Iranian vessels sending crude oil to China.
+                Iran is actually selling more oil today than it did before the war. So that means
+                that on net, the global economy has a tremendous tremendous negative supply shock in
+                oil.
+              </p>
+
+              <figure className="mt-5">
+                <img
+                  src="/example/frame_0020.jpg"
+                  alt="Bar chart showing vessel traffic through the Strait of Hormuz"
+                  className="w-full rounded-lg"
+                />
+                <figcaption className="mt-1.5 text-center text-xs italic text-stone-400">
+                  Figure 1: Vessel traffic through the Strait of Hormuz since February 2026
+                </figcaption>
+              </figure>
+
+              <p className="mt-4 text-[15px] leading-relaxed text-stone-700">
+                That supply shock has in part been mitigated by factors such as Saudi Arabia sending
+                oil through a pipe to the Red Sea and also the release of emergency oil stockpiles
+                throughout the world. But at the end of the day, the world still is receiving on a
+                flow basis fewer barrels than before, and that&apos;s showing up in pricing.
+              </p>
+
+              <figure className="mt-5">
+                <img
+                  src="/example/frame_0030.jpg"
+                  alt="Line chart showing jet fuel prices surging above other petroleum products"
+                  className="w-full rounded-lg"
+                />
+                <figcaption className="mt-1.5 text-center text-xs italic text-stone-400">
+                  Figure 2: Jet fuel prices surging ahead of other petroleum products
+                </figcaption>
+              </figure>
+            </article>
           </div>
+
+          {/* Gradient fade */}
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-white to-transparent" />
         </div>
       </div>
     </div>
