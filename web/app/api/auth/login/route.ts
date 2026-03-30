@@ -12,5 +12,8 @@ export async function GET() {
     clientId: process.env.WORKOS_CLIENT_ID!,
   });
 
+  console.log("[auth/login] redirectUri:", redirectUri);
+  console.log("[auth/login] authorization url:", url);
+
   redirect(url);
 }
