@@ -71,13 +71,12 @@ cp deploy/*.service /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable video-to-essay-discover video-to-essay-download video-to-essay-process video-to-essay-deliver
 
+echo "=== Restarting workers ==="
+systemctl restart video-to-essay-discover video-to-essay-download video-to-essay-process video-to-essay-deliver
+
 echo ""
 echo "=== Setup complete ==="
-echo "Next steps:"
-echo "  1. Edit $INSTALL_DIR/.env with your credentials"
-echo "  2. Start workers:"
-echo "     systemctl start video-to-essay-discover video-to-essay-download video-to-essay-process video-to-essay-deliver"
-echo "  3. Check status:"
-echo "     systemctl status video-to-essay-*"
-echo "  4. View logs:"
-echo "     journalctl -u video-to-essay-download -f"
+echo "Worker status:"
+systemctl is-active video-to-essay-discover video-to-essay-download video-to-essay-process video-to-essay-deliver || true
+echo ""
+echo "View logs: journalctl -u video-to-essay-download -f"
