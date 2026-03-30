@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/app/lib/auth";
-import { searchVideos } from "@/app/lib/youtube";
+import { getVideoById, searchVideos } from "@/app/lib/youtube";
 
 export async function GET(request: NextRequest) {
   try {
@@ -15,6 +15,13 @@ export async function GET(request: NextRequest) {
       { detail: "Query parameter q is required" },
       { status: 422 },
     );
+  }
+
+  // If query looks like a video ID (11 chars, alphanumeric + dash/underscore),
+  // use direct lookup instead of search for reliable results
+  if (/^[\w-]{11}$/.test(q)) {
+    const video = await getVideoById(q);
+    return NextResponse.json(video ? [video] : []);
   }
 
   const results = await searchVideos(q);

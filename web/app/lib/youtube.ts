@@ -85,6 +85,30 @@ export interface YouTubeVideoInfo {
   publishedAt?: string;
 }
 
+export async function getVideoById(
+  videoId: string,
+): Promise<YouTubeVideoInfo | null> {
+  const apiKey = process.env.YOUTUBE_API_KEY;
+  if (!apiKey) throw new Error("YOUTUBE_API_KEY must be set");
+
+  const url = `https://www.googleapis.com/youtube/v3/videos?id=${encodeURIComponent(videoId)}&part=snippet,statistics&key=${apiKey}`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+
+  const data = await res.json();
+  const item = data.items?.[0];
+  if (!item) return null;
+
+  return {
+    videoId: item.id,
+    title: item.snippet.title,
+    channelTitle: item.snippet.channelTitle,
+    thumbnailUrl: extractThumbnail(item.snippet.thumbnails),
+    viewCount: item.statistics?.viewCount ?? "0",
+    publishedAt: item.snippet.publishedAt,
+  };
+}
+
 export async function searchVideos(
   query: string,
 ): Promise<YouTubeVideoInfo[]> {

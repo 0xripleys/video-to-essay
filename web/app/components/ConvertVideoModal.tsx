@@ -51,6 +51,43 @@ export default function ConvertVideoModal({
   const isUrl = (text: string) =>
     text.includes("youtube.com") || text.includes("youtu.be");
 
+  const resolveUrl = useCallback(async (url: string) => {
+    const videoIdMatch = url.match(/(?:v=|youtu\.be\/)([\w-]{11})/);
+    if (!videoIdMatch) {
+      setError("Couldn't find a video at this URL");
+      return;
+    }
+
+    setResolving(true);
+    setError("");
+
+    try {
+      const data = await apiJson<VideoResult[]>(
+        `/api/videos/search?q=${encodeURIComponent(videoIdMatch[1])}`,
+      );
+      const match = data.find((v) => v.videoId === videoIdMatch[1]) ?? data[0];
+      if (match) {
+        setSelected(match);
+      } else {
+        setSelected({
+          videoId: videoIdMatch[1],
+          title: "YouTube Video",
+          channelTitle: "",
+          thumbnailUrl: `https://i.ytimg.com/vi/${videoIdMatch[1]}/mqdefault.jpg`,
+        });
+      }
+    } catch {
+      setSelected({
+        videoId: videoIdMatch[1],
+        title: "YouTube Video",
+        channelTitle: "",
+        thumbnailUrl: `https://i.ytimg.com/vi/${videoIdMatch[1]}/mqdefault.jpg`,
+      });
+    } finally {
+      setResolving(false);
+    }
+  }, []);
+
   const handleInputChange = useCallback((value: string) => {
     setQuery(value);
     setError("");
@@ -61,7 +98,10 @@ export default function ConvertVideoModal({
     const trimmed = value.trim();
     if (!trimmed) return;
 
-    if (isUrl(trimmed)) return;
+    if (isUrl(trimmed)) {
+      resolveUrl(trimmed);
+      return;
+    }
 
     debounceRef.current = setTimeout(async () => {
       setSearching(true);
@@ -76,7 +116,7 @@ export default function ConvertVideoModal({
         setSearching(false);
       }
     }, 300);
-  }, []);
+  }, [resolveUrl]);
 
   const handleKeyDown = async (e: React.KeyboardEvent) => {
     if (e.key !== "Enter") return;
@@ -84,46 +124,7 @@ export default function ConvertVideoModal({
     if (!trimmed || !isUrl(trimmed)) return;
 
     e.preventDefault();
-    setResolving(true);
-    setError("");
-
-    // Extract video ID from URL and construct a search to get metadata
-    const videoIdMatch = trimmed.match(/(?:v=|youtu\.be\/)([\w-]{11})/);
-    if (!videoIdMatch) {
-      setError("Couldn't find a video at this URL");
-      setResolving(false);
-      return;
-    }
-
-    // Use the video ID to get metadata directly
-    try {
-      const data = await apiJson<VideoResult[]>(
-        `/api/videos/search?q=${encodeURIComponent(videoIdMatch[1])}`,
-      );
-      // Find the exact video in results, or use first result
-      const match = data.find((v) => v.videoId === videoIdMatch[1]) ?? data[0];
-      if (match) {
-        setSelected(match);
-      } else {
-        // Even without metadata, we can still convert — create a minimal result
-        setSelected({
-          videoId: videoIdMatch[1],
-          title: "YouTube Video",
-          channelTitle: "",
-          thumbnailUrl: `https://i.ytimg.com/vi/${videoIdMatch[1]}/mqdefault.jpg`,
-        });
-      }
-    } catch {
-      // Fallback: still allow conversion with minimal info
-      setSelected({
-        videoId: videoIdMatch[1],
-        title: "YouTube Video",
-        channelTitle: "",
-        thumbnailUrl: `https://i.ytimg.com/vi/${videoIdMatch[1]}/mqdefault.jpg`,
-      });
-    } finally {
-      setResolving(false);
-    }
+    resolveUrl(trimmed);
   };
 
   const handleSelectResult = (result: VideoResult) => {
