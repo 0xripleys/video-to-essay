@@ -354,7 +354,7 @@ def download_video(
     cmd = [
         sys.executable, "-m", "yt_dlp",
         "--remote-components", "ejs:github",
-        "-f", "bv*+ba/b",
+        "-f", "bv*[height<=360]+ba/b",
         "-o", str(output_dir / "video.%(ext)s"),
         f"https://www.youtube.com/watch?v={video_id}",
     ]
