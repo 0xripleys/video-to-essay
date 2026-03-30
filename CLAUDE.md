@@ -92,7 +92,8 @@ Each step is idempotent (skips if output exists unless `--force`). Each step rea
 - **Claude models** — Sonnet (`claude-sonnet-4-5-20250929`) in `transcriber.py`, `place_images.py`, `scorer.py`. Haiku (`claude-haiku-4-5-20251001`) in `extract_frames.py`, `filter_sponsors.py`, `diarize.py`, `transcriber.py` (style profiles). Update all six files if changing models.
 - **Deepgram** — `DEEPGRAM_API_KEY` required for transcription. Nova-3 with diarization.
 - **YouTube** — yt-dlp with `--remote-components ejs:github` for JS challenges. Cloud IPs need `--cookies`. Requires `ffmpeg` and `deno` on PATH.
-- **Email** — AgentMail API. Essays sent as HTML with markdown plaintext fallback.
+- **Email** — AgentMail API. Essays sent as HTML (inline-styled, sans-serif, 700px max-width) with plaintext fallback (80-char wrapped). Subject: `{Channel Name}: {Video Title}`.
+- **Images in emails** — Worker pipeline (`process_worker.py`) uploads frames to S3 and rewrites image paths to public S3 URLs before saving `essay_final.md`. CLI pipeline (`main.py`) uses base64 data URIs via `embed_images()` instead.
 - **No retries on failure** — Workers set `error` on the video/delivery row and move on. No automatic retry mechanism.
 
 ## Environment Variables
