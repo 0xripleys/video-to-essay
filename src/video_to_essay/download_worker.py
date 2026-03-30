@@ -21,18 +21,23 @@ def _download_one(video: dict) -> None:
 
     # Skip if already downloaded locally
     existing = sorted(run_dir.glob("video.*"))
-    if not existing:
+    if existing:
+        print(f"  [{video_id}] Video already exists locally, skipping download")
+    else:
+        print(f"  [{video_id}] Downloading video...")
         download_video(video_id, run_dir)
+        print(f"  [{video_id}] Download complete")
 
     # Save metadata
     meta_path = run_dir / "metadata.json"
     if not meta_path.exists():
+        print(f"  [{video_id}] Fetching metadata...")
         meta: dict = {"url": video["youtube_url"], "video_id": video_id}
         try:
             yt_meta = fetch_video_metadata(video_id)
             meta.update(yt_meta)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"  [{video_id}] Metadata fetch failed: {e}")
         meta_path.write_text(json.dumps(meta, indent=2))
 
     # Get title from metadata
@@ -41,27 +46,32 @@ def _download_one(video: dict) -> None:
         meta_data = json.loads(meta_path.read_text())
         title = meta_data.get("title")
 
+    print(f"  [{video_id}] Uploading to S3...")
     upload_run(video_id, step_dirs=["00_download"])
     db.mark_video_downloaded(video["id"], video_title=title)
-    print(f"Download: completed {video_id} ({title or 'untitled'})")
+    print(f"  [{video_id}] Done ({title or 'untitled'})")
 
 
 def download_loop(poll_interval: float = 10.0) -> None:
     """Poll for videos pending download and process them."""
     print(f"Download worker started (polling every {poll_interval}s)")
-    for key in ("DATABASE_URL", "S3_BUCKET_NAME"):
+    for key in ("DATABASE_URL", "S3_BUCKET_NAME", "PROXY_URL"):
         val = os.environ.get(key)
         print(f"  {key}: {'set' if val else 'NOT SET'}")
     while True:
         try:
             videos = db.get_videos_pending_download()
+            if videos:
+                print(f"Found {len(videos)} video(s) pending download")
             for video in videos:
+                vid = video["youtube_video_id"]
+                print(f"  [{vid}] Starting download for {video.get('youtube_url', vid)}")
                 try:
                     _download_one(video)
                 except Exception:
                     traceback.print_exc()
                     db.mark_video_failed(video["id"], f"Download failed: {traceback.format_exc()}")
-                    print(f"Download: failed {video['youtube_video_id']}")
+                    print(f"  [{vid}] FAILED")
         except Exception:
             traceback.print_exc()
         time.sleep(poll_interval)
