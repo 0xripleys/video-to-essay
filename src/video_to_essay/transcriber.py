@@ -364,7 +364,22 @@ def download_video(
     if proxy_url:
         cmd.extend(["--proxy", proxy_url])
 
-    print(f"Downloading video {video_id}...")
+    # Verify the selected format has audio before downloading
+    check = subprocess.run(
+        cmd + ["--simulate", "--print", "%(acodec)s"],
+        capture_output=True, text=True, timeout=60,
+    )
+    if check.returncode != 0:
+        raise RuntimeError(
+            f"yt-dlp format check failed.\nstderr: {check.stderr}\nstdout: {check.stdout}"
+        )
+    acodec = check.stdout.strip()
+    if acodec == "none":
+        raise RuntimeError(
+            f"yt-dlp selected a video-only format (acodec=none) for {video_id}. "
+            f"No audio would be available for transcription."
+        )
+    print(f"Format check passed (acodec={acodec}), downloading video {video_id}...")
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
 
     if result.returncode != 0:
@@ -374,10 +389,32 @@ def download_video(
             f"stdout: {result.stdout}"
         )
 
-    candidates = sorted(output_dir.glob("video.*"))
-    if not candidates:
+    all_candidates = sorted(output_dir.glob("video.*"))
+    if not all_candidates:
         raise RuntimeError(
             f"Download appeared to succeed but no video file found in {output_dir}"
         )
+    # Prefer clean filenames (video.mp4) over yt-dlp intermediate files (video.f396.mp4)
+    import re as _re
+    candidates = [f for f in all_candidates if not _re.search(r"\.f\d+\.", f.name)] or all_candidates
 
-    return candidates[0]
+    video_file = candidates[0]
+
+    # Verify the downloaded file actually contains an audio stream
+    probe = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-select_streams", "a",
+            "-show_entries", "stream=codec_type",
+            "-of", "csv=p=0",
+            str(video_file),
+        ],
+        capture_output=True, text=True, timeout=30,
+    )
+    if not probe.stdout.strip():
+        raise RuntimeError(
+            f"Downloaded file {video_file.name} has no audio stream. "
+            f"yt-dlp may have selected a video-only format."
+        )
+
+    return video_file

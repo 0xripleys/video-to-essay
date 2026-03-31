@@ -44,10 +44,11 @@ def _process_one(video: dict) -> None:
 
     download_run(youtube_video_id, step_dirs=["00_download"])
 
-    # Find the video file
-    video_files = sorted(dl_dir.glob("video.*"))
-    if not video_files:
+    # Find the video file, preferring clean names over yt-dlp intermediates (e.g. video.f396.mp4)
+    all_video_files = sorted(dl_dir.glob("video.*"))
+    if not all_video_files:
         raise RuntimeError(f"No video file found in {dl_dir}")
+    video_files = [f for f in all_video_files if not re.search(r"\.f\d+\.", f.name)] or all_video_files
     video_path = video_files[0]
 
     # Load metadata

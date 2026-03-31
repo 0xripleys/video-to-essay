@@ -2,6 +2,7 @@
 
 import json
 import os
+import subprocess
 import traceback
 import time
 from pathlib import Path
@@ -24,10 +25,23 @@ def _download_one(video: dict) -> None:
         print(f"  [{video_id}] Removing partial download: {part_file.name}")
         part_file.unlink()
 
-    # Skip if already downloaded locally (exclude .part files)
-    existing = [f for f in sorted(run_dir.glob("video.*")) if not f.name.endswith(".part")]
+    # Skip if already downloaded locally (exclude .part files), but validate audio
+    import re as _re
+    all_existing = [f for f in sorted(run_dir.glob("video.*")) if not f.name.endswith(".part")]
+    existing = [f for f in all_existing if not _re.search(r"\.f\d+\.", f.name)] or all_existing
     if existing:
-        print(f"  [{video_id}] Video already exists locally, skipping download")
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a",
+             "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(existing[0])],
+            capture_output=True, text=True, timeout=30,
+        )
+        if probe.stdout.strip():
+            print(f"  [{video_id}] Video already exists locally with audio, skipping download")
+        else:
+            print(f"  [{video_id}] Cached file has no audio stream, re-downloading...")
+            existing[0].unlink()
+            download_video(video_id, run_dir)
+            print(f"  [{video_id}] Download complete")
     else:
         print(f"  [{video_id}] Downloading video...")
         download_video(video_id, run_dir)
