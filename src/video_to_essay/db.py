@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS videos (
     youtube_url TEXT NOT NULL,
     video_title TEXT,
     channel_id TEXT REFERENCES channels(id),
+    matched_playlist_ids TEXT[],
     downloaded_at TIMESTAMPTZ,
     processed_at TIMESTAMPTZ,
     error TEXT,
@@ -45,6 +46,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id),
     channel_id TEXT NOT NULL REFERENCES channels(id),
+    playlist_ids TEXT[],
     poll_interval_hours INTEGER NOT NULL DEFAULT 1,
     active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL,
@@ -88,6 +90,8 @@ def _connect() -> psycopg.Connection:
 MIGRATIONS = [
     "ALTER TABLE channels ADD COLUMN IF NOT EXISTS thumbnail_url TEXT",
     "ALTER TABLE channels ADD COLUMN IF NOT EXISTS description TEXT",
+    "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS playlist_ids TEXT[]",
+    "ALTER TABLE videos ADD COLUMN IF NOT EXISTS matched_playlist_ids TEXT[]",
 ]
 
 
@@ -211,13 +215,16 @@ def get_channels_due_for_check() -> list[dict[str, Any]]:
 
 
 def create_subscription(
-    user_id: str, channel_id: str, poll_interval_hours: int = 1
+    user_id: str,
+    channel_id: str,
+    poll_interval_hours: int = 1,
+    playlist_ids: list[str] | None = None,
 ) -> str:
     sub_id = _uid()
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO subscriptions (id, user_id, channel_id, poll_interval_hours, active, created_at) VALUES (%s, %s, %s, %s, TRUE, %s)",
-            (sub_id, user_id, channel_id, poll_interval_hours, _now()),
+            "INSERT INTO subscriptions (id, user_id, channel_id, playlist_ids, poll_interval_hours, active, created_at) VALUES (%s, %s, %s, %s, %s, TRUE, %s)",
+            (sub_id, user_id, channel_id, playlist_ids, poll_interval_hours, _now()),
         )
         conn.commit()
     return sub_id
@@ -246,6 +253,16 @@ def get_subscription(sub_id: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+def get_channel_subscriptions(channel_id: str) -> list[dict[str, Any]]:
+    """Return all active subscriptions for a channel."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM subscriptions WHERE channel_id = %s AND active = TRUE",
+            (channel_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def deactivate_subscription(sub_id: str) -> None:
     with _connect() as conn:
         conn.execute(
@@ -271,12 +288,13 @@ def create_video(
     youtube_url: str,
     channel_id: str | None = None,
     video_title: str | None = None,
+    matched_playlist_ids: list[str] | None = None,
 ) -> str:
     video_id = _uid()
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO videos (id, youtube_video_id, youtube_url, video_title, channel_id, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
-            (video_id, youtube_video_id, youtube_url, video_title, channel_id, _now()),
+            "INSERT INTO videos (id, youtube_video_id, youtube_url, video_title, channel_id, matched_playlist_ids, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (video_id, youtube_video_id, youtube_url, video_title, channel_id, matched_playlist_ids, _now()),
         )
         conn.commit()
     return video_id
@@ -420,6 +438,7 @@ def create_subscription_deliveries() -> int:
             LEFT JOIN deliveries d ON d.video_id = v.id AND d.user_id = u.id
             WHERE v.processed_at IS NOT NULL
               AND d.id IS NULL
+              AND (s.playlist_ids IS NULL OR v.matched_playlist_ids && s.playlist_ids)
             ON CONFLICT DO NOTHING
             """
         )

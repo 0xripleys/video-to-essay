@@ -46,6 +46,7 @@ export interface Subscription {
   id: string;
   user_id: string;
   channel_id: string;
+  playlist_ids: string[] | null;
   poll_interval_hours: number;
   active: boolean;
   created_at: string;
@@ -194,11 +195,12 @@ export async function getOrCreateChannel(
 export async function createSubscription(
   userId: string,
   channelId: string,
+  playlistIds: string[] | null = null,
 ): Promise<string> {
   const id = uid();
   await pool.query(
-    "INSERT INTO subscriptions (id, user_id, channel_id, poll_interval_hours, active, created_at) VALUES ($1, $2, $3, 1, TRUE, $4)",
-    [id, userId, channelId, now()],
+    "INSERT INTO subscriptions (id, user_id, channel_id, playlist_ids, poll_interval_hours, active, created_at) VALUES ($1, $2, $3, $4, 1, TRUE, $5)",
+    [id, userId, channelId, playlistIds, now()],
   );
   return id;
 }
@@ -218,6 +220,17 @@ export async function listUserSubscriptions(
     [userId],
   );
   return rows;
+}
+
+export async function getSubscriptionByUserAndChannel(
+  userId: string,
+  channelId: string,
+): Promise<Subscription | null> {
+  const { rows } = await pool.query(
+    "SELECT * FROM subscriptions WHERE user_id = $1 AND channel_id = $2 AND active = TRUE",
+    [userId, channelId],
+  );
+  return rows[0] ?? null;
 }
 
 export async function getSubscription(
@@ -244,5 +257,15 @@ export async function updateSubscriptionInterval(
   await pool.query(
     "UPDATE subscriptions SET poll_interval_hours = $1 WHERE id = $2",
     [pollIntervalHours, subId],
+  );
+}
+
+export async function updateSubscriptionPlaylists(
+  subId: string,
+  playlistIds: string[] | null,
+): Promise<void> {
+  await pool.query(
+    "UPDATE subscriptions SET playlist_ids = $1 WHERE id = $2",
+    [playlistIds, subId],
   );
 }

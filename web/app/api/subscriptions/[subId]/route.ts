@@ -4,6 +4,7 @@ import {
   getSubscription,
   deactivateSubscription,
   updateSubscriptionInterval,
+  updateSubscriptionPlaylists,
 } from "@/app/lib/db";
 
 export async function DELETE(
@@ -51,6 +52,11 @@ export async function PATCH(
   }
 
   const body = await request.json();
-  await updateSubscriptionInterval(subId, body.poll_interval_hours);
+  if (body.poll_interval_hours !== undefined) {
+    await updateSubscriptionInterval(subId, body.poll_interval_hours);
+  }
+  if ("playlist_ids" in body) {
+    await updateSubscriptionPlaylists(subId, body.playlist_ids ?? null);
+  }
   return NextResponse.json({ status: "updated" });
 }

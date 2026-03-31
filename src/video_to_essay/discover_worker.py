@@ -17,6 +17,60 @@ def _uploads_playlist_id(channel_id: str) -> str:
     return "UU" + channel_id[2:]
 
 
+def _video_in_playlist(video_id: str, playlist_id: str, api_key: str) -> bool:
+    """Check if a video exists in a YouTube playlist."""
+    page_token: str | None = None
+    while True:
+        params: dict = {
+            "playlistId": playlist_id,
+            "part": "snippet",
+            "maxResults": 50,
+            "key": api_key,
+        }
+        if page_token:
+            params["pageToken"] = page_token
+        resp = httpx.get(PLAYLIST_ITEMS_URL, params=params, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        for item in data.get("items", []):
+            if item["snippet"]["resourceId"]["videoId"] == video_id:
+                return True
+        if "nextPageToken" not in data:
+            break
+        page_token = data["nextPageToken"]
+    return False
+
+
+def _check_playlist_membership(
+    video_id: str, channel_id: str, api_key: str
+) -> list[str] | None:
+    """Check whether a new video should be inserted based on subscription playlist filters.
+
+    Returns None if any subscription is unfiltered (insert without restriction).
+    Returns a list of matched playlist IDs if all subscriptions are filtered.
+    Returns an empty list if the video matches no playlists (skip it).
+    """
+    subs = db.get_channel_subscriptions(channel_id)
+    if not subs:
+        return []  # no subscribers at all — skip
+
+    # If any subscription wants all uploads, no filtering needed
+    if any(s["playlist_ids"] is None for s in subs):
+        return None
+
+    # All subscriptions are filtered — collect unique playlist IDs
+    all_playlist_ids: set[str] = set()
+    for s in subs:
+        all_playlist_ids.update(s["playlist_ids"])
+
+    matched: list[str] = []
+    for pl_id in all_playlist_ids:
+        if _video_in_playlist(video_id, pl_id, api_key):
+            matched.append(pl_id)
+
+    return matched
+
+
 def _check_channel(channel: dict, api_key: str) -> int:
     """Fetch uploads playlist for a channel and insert any new videos. Returns count of new videos."""
     youtube_channel_id = channel["youtube_channel_id"]
@@ -67,6 +121,11 @@ def _check_channel(channel: dict, api_key: str) -> int:
             if existing:
                 continue
 
+            # Check playlist filtering
+            membership = _check_playlist_membership(video_id, channel["id"], api_key)
+            if membership is not None and len(membership) == 0:
+                continue  # no subscriber wants this video
+
             title = snippet.get("title")
             video_url = f"https://www.youtube.com/watch?v={video_id}"
 
@@ -75,6 +134,7 @@ def _check_channel(channel: dict, api_key: str) -> int:
                 youtube_url=video_url,
                 channel_id=channel["id"],
                 video_title=title,
+                matched_playlist_ids=membership,
             )
             new_count += 1
 

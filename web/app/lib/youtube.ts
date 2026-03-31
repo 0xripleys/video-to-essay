@@ -17,11 +17,25 @@ function extractThumbnail(thumbnails: { medium?: { url: string }; default?: { ur
   return raw ? ensureHttps(raw) : "";
 }
 
+export function extractPlaylistId(input: string): string | null {
+  const listMatch = input.match(/[?&]list=([\w-]+)/);
+  if (listMatch) return listMatch[1];
+  const playlistMatch = input.match(/playlist\?list=([\w-]+)/);
+  if (playlistMatch) return playlistMatch[1];
+  return null;
+}
+
 export async function resolveChannel(
   input: string,
 ): Promise<YouTubeChannelInfo | null> {
   const apiKey = process.env.YOUTUBE_API_KEY;
   if (!apiKey) throw new Error("YOUTUBE_API_KEY must be set");
+
+  // If it's a playlist URL, resolve the channel from the playlist
+  const playlistId = extractPlaylistId(input);
+  if (playlistId && !input.match(/channel\/(UC[\w-]{22})/) && !input.match(/@([\w.-]+)/)) {
+    return resolveChannelFromPlaylist(playlistId, apiKey);
+  }
 
   // If it's already a UC... channel ID, look it up directly
   const directMatch = input.match(/channel\/(UC[\w-]{22})/);
@@ -42,6 +56,20 @@ export async function resolveChannel(
   }
 
   return null;
+}
+
+async function resolveChannelFromPlaylist(
+  playlistId: string,
+  apiKey: string,
+): Promise<YouTubeChannelInfo | null> {
+  const url = `https://www.googleapis.com/youtube/v3/playlists?id=${encodeURIComponent(playlistId)}&part=snippet&key=${apiKey}`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const data = await res.json();
+  const item = data.items?.[0];
+  if (!item) return null;
+  const channelId = item.snippet.channelId;
+  return fetchChannelById(channelId, apiKey);
 }
 
 async function fetchChannelByHandle(
@@ -143,6 +171,49 @@ export async function searchVideos(
     viewCount: statsMap.get(item.id.videoId) ?? "0",
     publishedAt: item.snippet.publishedAt,
   }));
+}
+
+export interface YouTubePlaylistInfo {
+  playlistId: string;
+  title: string;
+  thumbnailUrl: string;
+  itemCount: number;
+}
+
+export async function listChannelPlaylists(
+  channelId: string,
+): Promise<YouTubePlaylistInfo[]> {
+  const apiKey = process.env.YOUTUBE_API_KEY;
+  if (!apiKey) throw new Error("YOUTUBE_API_KEY must be set");
+
+  const results: YouTubePlaylistInfo[] = [];
+  let pageToken: string | undefined;
+
+  do {
+    const params = new URLSearchParams({
+      channelId,
+      part: "snippet,contentDetails",
+      maxResults: "50",
+      key: apiKey,
+    });
+    if (pageToken) params.set("pageToken", pageToken);
+
+    const res = await fetch(`https://www.googleapis.com/youtube/v3/playlists?${params}`);
+    if (!res.ok) break;
+
+    const data = await res.json();
+    for (const item of data.items ?? []) {
+      results.push({
+        playlistId: item.id,
+        title: item.snippet.title,
+        thumbnailUrl: extractThumbnail(item.snippet.thumbnails),
+        itemCount: item.contentDetails?.itemCount ?? 0,
+      });
+    }
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+
+  return results;
 }
 
 export async function searchChannels(

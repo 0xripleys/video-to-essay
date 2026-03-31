@@ -4,6 +4,7 @@ import {
   getOrCreateChannel,
   createSubscription,
   listUserSubscriptions,
+  getSubscriptionByUserAndChannel,
 } from "@/app/lib/db";
 import { resolveChannel } from "@/app/lib/youtube";
 
@@ -29,6 +30,7 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json();
   const url: string = body.url;
+  const playlistIds: string[] | undefined = body.playlist_ids;
 
   if (!url) {
     return NextResponse.json({ detail: "URL is required" }, { status: 422 });
@@ -39,7 +41,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         detail:
-          "Could not find YouTube channel. Use a URL like youtube.com/@handle or youtube.com/channel/UC...",
+          "Could not find YouTube channel. Use a URL like youtube.com/@handle, youtube.com/channel/UC..., or a playlist URL.",
       },
       { status: 422 },
     );
@@ -53,7 +55,11 @@ export async function POST(request: NextRequest) {
   );
 
   try {
-    const subId = await createSubscription(user.id, channel.id);
+    const subId = await createSubscription(
+      user.id,
+      channel.id,
+      playlistIds ?? null,
+    );
     return NextResponse.json({
       subscription_id: subId,
       channel_id: channel.id,
@@ -63,8 +69,16 @@ export async function POST(request: NextRequest) {
       description: channelInfo.description,
     });
   } catch {
+    const existing = await getSubscriptionByUserAndChannel(user.id, channel.id);
     return NextResponse.json(
-      { detail: "Already subscribed" },
+      {
+        detail: "Already subscribed",
+        subscription_id: existing?.id,
+        youtube_channel_id: channelInfo.channelId,
+        name: channelInfo.name,
+        thumbnail_url: channelInfo.thumbnailUrl,
+        description: channelInfo.description,
+      },
       { status: 409 },
     );
   }
