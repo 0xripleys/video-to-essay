@@ -35,21 +35,32 @@ function relativeTime(iso: string): string {
   });
 }
 
+function dateKey(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function dateGroupLabel(iso: string): string {
   const date = new Date(iso);
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 function groupVideosByDate(videos: Video[]): { label: string; videos: Video[] }[] {
-  const map = new Map<string, Video[]>();
+  const sorted = [...videos].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+  );
 
-  for (const v of videos) {
-    const label = dateGroupLabel(v.created_at);
-    if (!map.has(label)) map.set(label, []);
-    map.get(label)!.push(v);
+  const map = new Map<string, Video[]>();
+  for (const v of sorted) {
+    const key = dateKey(v.created_at);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(v);
   }
 
-  return Array.from(map, ([label, videos]) => ({ label, videos }));
+  return Array.from(map, ([key, videos]) => ({
+    label: dateGroupLabel(videos[0].created_at),
+    videos,
+  }));
 }
 
 function StatusBadge({ video }: { video: Video }) {
