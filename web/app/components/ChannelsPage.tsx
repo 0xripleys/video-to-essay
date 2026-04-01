@@ -298,14 +298,14 @@ export default function ChannelsPage() {
 
   if (loading) {
     return (
-      <div className="mx-auto max-w-2xl px-6 py-8">
+      <div className="mx-auto max-w-2xl px-4 py-6 md:px-6 md:py-8">
         <h1 className="text-xl font-bold tracking-tight">Channels</h1>
       </div>
     );
   }
 
   return (
-    <div className="mx-auto max-w-2xl px-6 py-8">
+    <div className="mx-auto max-w-2xl px-4 py-6 md:px-6 md:py-8">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold tracking-tight">Channels</h1>
         <button

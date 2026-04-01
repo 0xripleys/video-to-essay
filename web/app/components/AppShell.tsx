@@ -23,7 +23,7 @@ function Sidebar() {
   const { view, setView } = useView();
 
   return (
-    <aside className="flex w-52 flex-shrink-0 flex-col border-r border-stone-200 bg-stone-50 px-3 pb-6 pt-4">
+    <aside className="hidden md:flex w-52 flex-shrink-0 flex-col border-r border-stone-200 bg-stone-50 px-3 pb-6 pt-4">
       <a href="/" className="mb-6 px-2 text-[15px] font-semibold tracking-tight text-stone-900">
         Scrivi
       </a>
@@ -87,6 +87,40 @@ function Sidebar() {
   );
 }
 
+function MobileHeader() {
+  const { view, setView } = useView();
+
+  return (
+    <header className="flex md:hidden items-center justify-between border-b border-stone-200 bg-stone-50 px-4 py-3">
+      <a href="/" className="text-[15px] font-semibold tracking-tight text-stone-900">
+        Scrivi
+      </a>
+      <nav className="flex items-center gap-1">
+        <button
+          onClick={() => setView("feed")}
+          className={`rounded-lg px-3 py-1.5 text-[13px] transition-colors ${
+            view === "feed"
+              ? "bg-white font-semibold text-stone-900 shadow-sm ring-1 ring-stone-200"
+              : "text-stone-500"
+          }`}
+        >
+          Feed
+        </button>
+        <button
+          onClick={() => setView("channels")}
+          className={`rounded-lg px-3 py-1.5 text-[13px] transition-colors ${
+            view === "channels"
+              ? "bg-white font-semibold text-stone-900 shadow-sm ring-1 ring-stone-200"
+              : "text-stone-500"
+          }`}
+        >
+          Channels
+        </button>
+      </nav>
+    </header>
+  );
+}
+
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const [auth, setAuth] = useState<AuthState>("loading");
   const [view, setView] = useState<View>("feed");
@@ -101,7 +135,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     <AuthContext.Provider value={auth}>
       <ViewContext.Provider value={{ view, setView }}>
         {auth === "loading" ? null : auth === "authenticated" ? (
-          <div className="flex h-screen">
+          <div className="flex h-screen flex-col md:flex-row">
+            <MobileHeader />
             <Sidebar />
             <main className="flex-1 overflow-y-auto">{children}</main>
           </div>
