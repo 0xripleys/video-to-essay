@@ -37,6 +37,9 @@ export async function GET(
 
   if (status === "done") {
     result.essay_md = await getEssayFromS3(video.youtube_video_id);
+    if (!result.essay_md) {
+      console.warn(`[reader] Essay not found in S3 for video ${video.youtube_video_id}`);
+    }
   }
 
   return NextResponse.json(result);

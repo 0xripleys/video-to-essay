@@ -92,6 +92,12 @@ function ReaderContent() {
           className="mt-8 max-w-none font-serif text-stone-800 leading-relaxed"
           dangerouslySetInnerHTML={{ __html: markdownToHtml(video.essay_md) }}
         />
+      ) : video.status === "done" && !video.essay_md ? (
+        <div className="mt-8 rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <p className="text-sm text-amber-700">
+            Essay file could not be loaded. It may not have been uploaded to storage yet.
+          </p>
+        </div>
       ) : video.status === "failed" ? (
         <div className="mt-8 rounded-lg border border-red-200 bg-red-50 p-4">
           <p className="text-sm text-red-700">{video.error}</p>
