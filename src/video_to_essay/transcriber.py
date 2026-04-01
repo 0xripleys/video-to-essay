@@ -183,7 +183,7 @@ The company allocated substantial resources to address the challenge, and the st
     result = _stream_message(
         client,
         model="claude-sonnet-4-5-20250929",
-        max_tokens=16384,
+        max_tokens=64000,
         system=system_prompt,
         messages=[{
             "role": "user",
@@ -275,7 +275,7 @@ The company allocated substantial resources to address the challenge, and the st
     result = _stream_message(
         client,
         model="claude-sonnet-4-5-20250929",
-        max_tokens=16384,
+        max_tokens=64000,
         system=system_prompt,
         messages=[{
             "role": "user",
