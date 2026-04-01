@@ -129,7 +129,7 @@ export default function Dashboard() {
 
   if (loading) {
     return (
-      <div className="mx-auto max-w-2xl px-6 py-8">
+      <div className="mx-auto max-w-2xl px-4 py-6 md:px-6 md:py-8">
         <h1 className="text-xl font-bold tracking-tight">Feed</h1>
       </div>
     );
@@ -138,7 +138,7 @@ export default function Dashboard() {
   const groups = groupVideosByDate(videos);
 
   return (
-    <div className="mx-auto max-w-2xl px-6 py-8">
+    <div className="mx-auto max-w-2xl px-4 py-6 md:px-6 md:py-8">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold tracking-tight">Feed</h1>
         <NewDropdown
@@ -166,7 +166,7 @@ export default function Dashboard() {
                   {group.videos.map((v) => (
                     <div
                       key={v.id}
-                      className={`flex items-center gap-4 rounded-lg border px-4 py-3 ${
+                      className={`flex items-center gap-3 rounded-lg border px-3 py-3 md:gap-4 md:px-4 ${
                         isInProgress(v)
                           ? "border-amber-100 bg-amber-50"
                           : "border-stone-200 bg-white"
@@ -190,7 +190,7 @@ export default function Dashboard() {
                           {relativeTime(v.created_at)}
                         </p>
                       </div>
-                      <div className="ml-4 flex-shrink-0">
+                      <div className="ml-2 flex-shrink-0 md:ml-4">
                         <StatusBadge video={v} />
                       </div>
                     </div>
