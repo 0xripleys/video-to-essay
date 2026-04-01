@@ -163,38 +163,47 @@ export default function Dashboard() {
                   {group.label}
                 </p>
                 <div className="space-y-2">
-                  {group.videos.map((v) => (
-                    <div
-                      key={v.id}
-                      className={`flex items-center gap-3 rounded-lg border px-3 py-3 md:gap-4 md:px-4 ${
-                        isInProgress(v)
-                          ? "border-amber-100 bg-amber-50"
-                          : "border-stone-200 bg-white"
-                      }`}
-                    >
-                      <img
-                        src={proxyImageUrl(
-                          `https://i.ytimg.com/vi/${v.youtube_video_id}/mqdefault.jpg`,
-                        )}
-                        alt=""
-                        className="h-12 w-20 flex-shrink-0 rounded object-cover"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-stone-900">
-                          {v.video_title || v.youtube_url}
-                        </p>
-                        <p className="text-xs text-stone-400">
-                          {v.channel_name ||
-                            (v.source === "one_off" ? "One-off" : "")}
-                          {v.channel_name || v.source ? " \u00b7 " : ""}
-                          {relativeTime(v.created_at)}
-                        </p>
+                  {group.videos.map((v) => {
+                    const cardClass = `flex items-center gap-3 rounded-lg border px-3 py-3 md:gap-4 md:px-4 ${
+                      isInProgress(v)
+                        ? "border-amber-100 bg-amber-50"
+                        : "border-stone-200 bg-white"
+                    }`;
+                    const cardContent = (
+                      <>
+                        <img
+                          src={proxyImageUrl(
+                            `https://i.ytimg.com/vi/${v.youtube_video_id}/mqdefault.jpg`,
+                          )}
+                          alt=""
+                          className="h-12 w-20 flex-shrink-0 rounded object-cover"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-stone-900">
+                            {v.video_title || v.youtube_url}
+                          </p>
+                          <p className="text-xs text-stone-400">
+                            {v.channel_name ||
+                              (v.source === "one_off" ? "One-off" : "")}
+                            {v.channel_name || v.source ? " \u00b7 " : ""}
+                            {relativeTime(v.created_at)}
+                          </p>
+                        </div>
+                        <div className="ml-2 flex-shrink-0 md:ml-4">
+                          <StatusBadge video={v} />
+                        </div>
+                      </>
+                    );
+                    return v.status === "done" ? (
+                      <Link key={v.id} href={`/reader?id=${v.id}`} className={cardClass}>
+                        {cardContent}
+                      </Link>
+                    ) : (
+                      <div key={v.id} className={cardClass}>
+                        {cardContent}
                       </div>
-                      <div className="ml-2 flex-shrink-0 md:ml-4">
-                        <StatusBadge video={v} />
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             ))}
