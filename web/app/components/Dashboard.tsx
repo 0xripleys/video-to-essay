@@ -37,30 +37,19 @@ function relativeTime(iso: string): string {
 
 function dateGroupLabel(iso: string): string {
   const date = new Date(iso);
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const yesterday = new Date(today.getTime() - 86400000);
-  const videoDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-
-  if (videoDay.getTime() === today.getTime()) return "Today";
-  if (videoDay.getTime() === yesterday.getTime()) return "Yesterday";
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 function groupVideosByDate(videos: Video[]): { label: string; videos: Video[] }[] {
-  const groups: { label: string; videos: Video[] }[] = [];
-  let currentLabel = "";
+  const map = new Map<string, Video[]>();
 
   for (const v of videos) {
     const label = dateGroupLabel(v.created_at);
-    if (label !== currentLabel) {
-      currentLabel = label;
-      groups.push({ label, videos: [] });
-    }
-    groups[groups.length - 1].videos.push(v);
+    if (!map.has(label)) map.set(label, []);
+    map.get(label)!.push(v);
   }
 
-  return groups;
+  return Array.from(map, ([label, videos]) => ({ label, videos }));
 }
 
 function StatusBadge({ video }: { video: Video }) {
