@@ -129,6 +129,11 @@ function markdownToHtml(md: string): string {
       /!\[([^\]]*)\]\(([^)]+)\)/g,
       '<img src="$2" alt="$1" class="rounded-lg my-4 max-w-full" />',
     )
+    // Links (but not images — already handled above)
+    .replace(
+      /\[([^\]]+)\]\(([^)]+)\)/g,
+      '<a href="$2" class="text-stone-500 hover:text-stone-700 underline" target="_blank" rel="noopener noreferrer">$1</a>',
+    )
     // Bold
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     // Italic (but not inside image tags)

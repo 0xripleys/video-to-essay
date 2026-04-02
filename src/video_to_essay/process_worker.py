@@ -70,7 +70,7 @@ def _process_one(video: dict) -> None:
 
     # Step 3: Essay
     essay_dir = _step_dir(run_dir, "essay")
-    essay_text = transcript_to_essay(cleaned)
+    essay_text = transcript_to_essay(cleaned, video_id=youtube_video_id)
     (essay_dir / "essay.md").write_text(essay_text)
 
     # Step 4: Extract frames

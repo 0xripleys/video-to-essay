@@ -198,7 +198,7 @@ def _step_essay(video_id: str, run_dir: Path, force: bool) -> bool:
         print(f"ERROR: no transcript found — run filter-sponsors step first")
         return False
     try:
-        text = transcript_to_essay(transcript_path.read_text())
+        text = transcript_to_essay(transcript_path.read_text(), video_id=video_id)
         out.write_text(text)
         print(f"Essay saved ({len(text)} chars) -> {out}")
         return True

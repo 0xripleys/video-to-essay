@@ -124,8 +124,21 @@ def extract_multi_speaker_style_profile(
     return msg.content[0].text
 
 
+def _timestamp_instructions(video_id: str) -> str:
+    """Return prompt instructions for converting timestamps to YouTube links."""
+    base_url = f"https://youtube.com/watch?v={video_id}"
+    return f"""\
+## Timestamp links
+The transcript contains timestamps like [MM:SS]. Convert each one into a markdown \
+link that jumps to that point in the YouTube video. Format: [MM:SS]({base_url}&t=Xs) \
+where X is the total seconds (e.g. [05:30]({base_url}&t=330s)). Place these links \
+at the start of each section or speaker turn — wherever a timestamp appeared in the \
+original transcript."""
+
+
 def _transcript_to_essay_single(
-    transcript: str, client: "anthropic.Anthropic", api_key: str | None
+    transcript: str, client: "anthropic.Anthropic", api_key: str | None,
+    video_id: str | None = None,
 ) -> str:
     """Single-speaker essay generation (original path)."""
     print("Extracting style profile from transcript...")
@@ -166,6 +179,9 @@ the speaker wrote it themselves, not like an academic rewrote it.
 - Fix grammar only where it would be confusing in written form
 - Ignore any sponsor reads, advertisements, or promotional content"""
 
+    if video_id:
+        system_prompt += "\n\n" + _timestamp_instructions(video_id)
+
     few_shot_examples = """\
 Here are examples of CORRECT vs INCORRECT conversion:
 
@@ -200,7 +216,8 @@ The company allocated substantial resources to address the challenge, and the st
 
 
 def _transcript_to_essay_multi(
-    transcript: str, client: "anthropic.Anthropic", api_key: str | None
+    transcript: str, client: "anthropic.Anthropic", api_key: str | None,
+    video_id: str | None = None,
 ) -> str:
     """Multi-speaker essay generation (dialogue-style)."""
     speakers = _extract_speakers(transcript)
@@ -250,6 +267,9 @@ voice and the conversational back-and-forth.
 - Preserve the order of who speaks when
 - Ignore any sponsor reads, advertisements, or promotional content"""
 
+    if video_id:
+        system_prompt += "\n\n" + _timestamp_instructions(video_id)
+
     few_shot_examples = """\
 Here are examples of CORRECT vs INCORRECT multi-speaker conversion:
 
@@ -291,21 +311,25 @@ The company allocated substantial resources to address the challenge, and the st
     return result
 
 
-def transcript_to_essay(transcript: str, api_key: str | None = None) -> str:
+def transcript_to_essay(
+    transcript: str, api_key: str | None = None, video_id: str | None = None,
+) -> str:
     """Convert a transcript to an essay using Claude API.
 
     Detects single vs multi-speaker transcripts and uses the appropriate
     generation strategy. Multi-speaker transcripts (with **Speaker Name**
     markers) produce dialogue-style essays. Single-speaker transcripts
     produce monologue essays with the speaker's preserved voice.
+
+    If video_id is provided, timestamps in the essay link to the YouTube video.
     """
     import anthropic
 
     client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
 
     if _is_multi_speaker(transcript):
-        return _transcript_to_essay_multi(transcript, client, api_key)
-    return _transcript_to_essay_single(transcript, client, api_key)
+        return _transcript_to_essay_multi(transcript, client, api_key, video_id)
+    return _transcript_to_essay_single(transcript, client, api_key, video_id)
 
 
 def fetch_video_metadata(
