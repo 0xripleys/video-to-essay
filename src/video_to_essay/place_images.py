@@ -93,24 +93,46 @@ def place_images_in_essay(
     paragraphs = essay_text.split("\n\n")
     numbered = "\n\n".join(f"[P{i}] {p}" for i, p in enumerate(paragraphs))
 
+    placement_tool = {
+        "name": "place_images",
+        "description": "Place images into the essay at appropriate positions.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "placements": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "image": {"type": "string", "description": "Image filename"},
+                            "after": {"type": "integer", "description": "Paragraph index to place image after"},
+                            "alt": {"type": "string", "description": "Short description of what the image shows"},
+                        },
+                        "required": ["image", "after", "alt"],
+                    },
+                }
+            },
+            "required": ["placements"],
+        },
+    }
+
     client = anthropic.Anthropic()
     msg = client.messages.create(
         model="claude-sonnet-4-5-20250929",
-        max_tokens=4096,
+        max_tokens=16384,
+        tools=[placement_tool],
+        tool_choice={"type": "tool", "name": "place_images"},
         messages=[
             {
                 "role": "user",
                 "content": (
                     "Here is a markdown essay with numbered paragraphs [P0], [P1], etc., "
                     "and a set of images extracted from the source video.\n\n"
-                    "For each image, decide which paragraph it should be placed AFTER. "
-                    "Return ONLY a JSON array of placements, one per image, in this format:\n"
-                    f'[{{"image": "{image_prefix}frame_0042.jpg", "after": 5, "alt": "short description"}}]\n\n'
+                    "For each image, decide which paragraph it should be placed AFTER.\n\n"
                     "Rules:\n"
                     "- Place each image after the paragraph where it is most contextually relevant\n"
                     "- Use every image exactly once\n"
-                    "- The alt text should be a brief description of what the image shows\n"
-                    "- Return ONLY valid JSON, no other text\n\n"
+                    "- The alt text should be a brief description of what the image shows\n\n"
                     f"Available images:\n{frame_list}\n\n"
                     f"Essay:\n{numbered}"
                 ),
@@ -118,11 +140,9 @@ def place_images_in_essay(
         ],
     )
 
-    raw = msg.content[0].text.strip()
-    if raw.startswith("```"):
-        raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-
-    placements: list[dict] = json.loads(raw)
+    # Find the tool_use block in the response
+    tool_block = next(b for b in msg.content if b.type == "tool_use")
+    placements: list[dict] = tool_block.input["placements"]
 
     # Group placements by paragraph index
     insert_after: dict[int, list[str]] = {}
