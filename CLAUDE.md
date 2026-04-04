@@ -93,7 +93,7 @@ Each step is idempotent (skips if output exists unless `--force`). Each step rea
 - **Deepgram** — `DEEPGRAM_API_KEY` required for transcription. Nova-3 with diarization.
 - **YouTube** — yt-dlp with `--remote-components ejs:github` for JS challenges. Cloud IPs need `--cookies`. Requires `ffmpeg` and `deno` on PATH.
 - **Email** — AgentMail API. Essays sent as HTML (inline-styled, sans-serif, 700px max-width) with plaintext fallback (80-char wrapped). Subject: `{Channel Name}: {Video Title}`.
-- **Images in emails** — Worker pipeline (`process_worker.py`) uploads frames to S3 and rewrites image paths to public S3 URLs before saving `essay_final.md`. CLI pipeline (`main.py`) uses base64 data URIs via `embed_images()` instead.
+- **Images in emails** — Worker pipeline (`process_worker.py`) uploads frames to S3 and rewrites image paths to pre-signed S3 URLs (7-day expiry) before saving `essay_final.md`. CLI pipeline (`main.py`) uses base64 data URIs via `embed_images()` instead.
 - **No retries on failure** — Workers set `error` on the video/delivery row and move on. No automatic retry mechanism.
 
 ## Environment Variables

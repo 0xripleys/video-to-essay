@@ -29,6 +29,22 @@ def get_public_url(key: str) -> str:
     return f"https://{bucket}.s3.{region}.amazonaws.com/{key}"
 
 
+def get_presigned_url(key: str, expires_in: int = 604800) -> str:
+    """Generate a pre-signed URL for a private S3 object.
+
+    Args:
+        key: S3 object key.
+        expires_in: URL expiration in seconds (default 7 days).
+    """
+    client = get_s3_client()
+    bucket, _ = _get_config()
+    return client.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": bucket, "Key": key},
+        ExpiresIn=expires_in,
+    )
+
+
 def _content_type(path: Path) -> str:
     ct, _ = mimetypes.guess_type(str(path))
     return ct or "application/octet-stream"

@@ -16,7 +16,7 @@ from .place_images import (
     load_kept_frames,
     place_images_in_essay,
 )
-from .s3 import download_run, get_public_url, upload_run
+from .s3 import download_run, get_presigned_url, upload_run
 from .transcriber import transcript_to_essay
 
 RUNS_DIR = Path("runs")
@@ -95,11 +95,11 @@ def _process_one(video: dict) -> None:
         annotated = annotate_essay(with_images)
         # Upload frames first so S3 URLs are valid
         upload_run(youtube_video_id, step_dirs=["04_frames"])
-        # Rewrite relative image paths to public S3 URLs
+        # Rewrite relative image paths to pre-signed S3 URLs
         prefix_pattern = re.escape(image_prefix)
         def _to_s3_url(m: re.Match[str]) -> str:
             alt, filename = m.group(1), Path(m.group(2)).name
-            url = get_public_url(f"runs/{youtube_video_id}/04_frames/kept/{filename}")
+            url = get_presigned_url(f"runs/{youtube_video_id}/04_frames/kept/{filename}")
             return f"![{alt}]({url})"
         final_essay = re.sub(
             rf"!\[(.*?)\]\(({prefix_pattern}frame_\d+\.jpg)\)",
