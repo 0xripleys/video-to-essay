@@ -33,6 +33,7 @@ export default function ConvertVideoModal({
   const [searching, setSearching] = useState(false);
   const [resolving, setResolving] = useState(false);
   const [converting, setConverting] = useState(false);
+  const [success, setSuccess] = useState(false);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<VideoResult | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
@@ -44,6 +45,7 @@ export default function ConvertVideoModal({
       setResults([]);
       setError("");
       setSelected(null);
+      setSuccess(false);
       setTimeout(() => inputRef.current?.focus(), 100);
     }
   }, [open]);
@@ -154,7 +156,7 @@ export default function ConvertVideoModal({
         setError(body.detail || "Failed to start conversion");
       } else {
         onConverted();
-        onClose();
+        setSuccess(true);
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Something went wrong");
@@ -173,7 +175,29 @@ export default function ConvertVideoModal({
       }}
     >
       <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
-        {selected ? (
+        {success && selected ? (
+          <div className="p-6 text-center">
+            {selected.thumbnailUrl && (
+              <img
+                src={proxyImageUrl(selected.thumbnailUrl)}
+                alt={selected.title}
+                className="mx-auto h-32 w-56 rounded-lg object-cover"
+              />
+            )}
+            <p className="mt-3 text-base font-semibold text-stone-900">
+              {selected.title}
+            </p>
+            <p className="mt-3 text-sm text-stone-600">
+              Your essay will be ready in about 5 minutes and sent to your email.
+            </p>
+            <button
+              onClick={onClose}
+              className="mt-5 w-full rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800"
+            >
+              Done
+            </button>
+          </div>
+        ) : selected ? (
           <div className="p-6 text-center">
             {selected.thumbnailUrl && (
               <img
