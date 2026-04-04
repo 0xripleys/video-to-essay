@@ -57,6 +57,11 @@ export default function AddChannelModal({
   const [existingSubId, setExistingSubId] = useState<string | null>(null);
   const [playlistFilter, setPlaylistFilter] = useState("");
 
+  // Post-subscribe: queue latest video
+  const [showQueuePrompt, setShowQueuePrompt] = useState(false);
+  const [queuingLatest, setQueuingLatest] = useState(false);
+  const [latestVideoTitle, setLatestVideoTitle] = useState<string | null>(null);
+
   useEffect(() => {
     if (open) {
       setQuery("");
@@ -70,6 +75,9 @@ export default function AddChannelModal({
       setAllVideos(true);
       setPreselectedPlaylistId(null);
       setExistingSubId(null);
+      setShowQueuePrompt(false);
+      setQueuingLatest(false);
+      setLatestVideoTitle(null);
       setTimeout(() => inputRef.current?.focus(), 100);
     }
   }, [open]);
@@ -264,12 +272,39 @@ export default function AddChannelModal({
         setError(body.detail || "Failed to subscribe");
       } else {
         onSubscribed();
-        onClose();
+        setShowQueuePrompt(true);
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
       setSubscribing(false);
+    }
+  };
+
+  const handleQueueLatest = async () => {
+    if (!selected) return;
+    setQueuingLatest(true);
+    setError("");
+    try {
+      const video = await apiJson<{ videoId: string; title: string }>(
+        `/api/channels/latest-video?channelId=${encodeURIComponent(selected.channelId)}`,
+      );
+      setLatestVideoTitle(video.title);
+
+      const url = `https://www.youtube.com/watch?v=${video.videoId}`;
+      const res = await api("/api/videos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setError(body.detail || "Failed to queue video");
+      }
+    } catch {
+      setError("Could not find a recent video on this channel");
+    } finally {
+      setQueuingLatest(false);
     }
   };
 
@@ -283,7 +318,56 @@ export default function AddChannelModal({
       }}
     >
       <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
-        {selected && showPlaylistPicker ? (
+        {showQueuePrompt && selected ? (
+          // Post-subscribe: offer to queue latest video
+          <div className="p-6 text-center">
+            {selected.thumbnailUrl && (
+              <img
+                src={proxyImageUrl(selected.thumbnailUrl)}
+                alt={selected.name}
+                className="mx-auto h-14 w-14 rounded-full object-cover"
+              />
+            )}
+            <p className="mt-3 text-base font-semibold text-stone-900">
+              Subscribed to {selected.name}
+            </p>
+            {latestVideoTitle ? (
+              <>
+                <p className="mt-3 text-sm text-stone-600">
+                  &ldquo;{latestVideoTitle}&rdquo; has been queued. It&apos;ll be ready in about 5 minutes and sent to your email.
+                </p>
+                <button
+                  onClick={onClose}
+                  className="mt-5 w-full rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800"
+                >
+                  Done
+                </button>
+              </>
+            ) : (
+              <>
+                <p className="mt-3 text-sm text-stone-500">
+                  Want to queue their latest video now?
+                </p>
+                {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+                <div className="mt-5 flex gap-2">
+                  <button
+                    onClick={onClose}
+                    className="flex-1 rounded-lg border border-stone-200 px-4 py-2 text-sm text-stone-600 hover:bg-stone-50"
+                  >
+                    No thanks
+                  </button>
+                  <button
+                    onClick={handleQueueLatest}
+                    disabled={queuingLatest}
+                    className="flex-1 rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+                  >
+                    {queuingLatest ? "Queueing..." : "Yes, queue it"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        ) : selected && showPlaylistPicker ? (
           // Phase 3: Playlist picker
           <div className="p-6">
             <h2 className="text-base font-semibold text-stone-900">

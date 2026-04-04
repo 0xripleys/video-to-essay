@@ -216,6 +216,29 @@ export async function listChannelPlaylists(
   return results;
 }
 
+export async function getLatestChannelVideo(
+  channelId: string,
+): Promise<YouTubeVideoInfo | null> {
+  const apiKey = process.env.YOUTUBE_API_KEY;
+  if (!apiKey) throw new Error("YOUTUBE_API_KEY must be set");
+
+  const searchUrl = `https://www.googleapis.com/youtube/v3/search?channelId=${encodeURIComponent(channelId)}&order=date&type=video&maxResults=1&part=snippet&key=${apiKey}`;
+  const searchRes = await fetch(searchUrl);
+  if (!searchRes.ok) return null;
+
+  const searchData = await searchRes.json();
+  const item = searchData.items?.[0];
+  if (!item) return null;
+
+  return {
+    videoId: item.id.videoId,
+    title: item.snippet.title,
+    channelTitle: item.snippet.channelTitle,
+    thumbnailUrl: extractThumbnail(item.snippet.thumbnails),
+    publishedAt: item.snippet.publishedAt,
+  };
+}
+
 export async function searchChannels(
   query: string,
 ): Promise<YouTubeChannelInfo[]> {
