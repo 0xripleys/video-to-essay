@@ -14,7 +14,7 @@ def get_posthog() -> Posthog | None:
         return None
     if _client is None:
         _client = Posthog(
-            api_key,
+            project_api_key=api_key,
             host=os.environ.get("POSTHOG_HOST", "https://us.i.posthog.com"),
         )
     return _client
