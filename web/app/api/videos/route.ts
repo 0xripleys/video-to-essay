@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/app/lib/auth";
 import { getOrCreateVideo, createDelivery, listUserVideos } from "@/app/lib/db";
+import { getPostHogClient } from "@/app/lib/posthog";
 
 const YOUTUBE_URL_RE =
   /^https?:\/\/(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)[\w-]{11}/;
@@ -63,6 +64,12 @@ export async function POST(request: NextRequest) {
 
   const video = await getOrCreateVideo(youtubeVideoId, url);
   await createDelivery(video.id, user.id, "one_off");
+
+  getPostHogClient()?.capture({
+    distinctId: user.id,
+    event: "video_conversion_requested",
+    properties: { youtube_video_id: youtubeVideoId },
+  });
 
   return NextResponse.json({ id: video.id });
 }

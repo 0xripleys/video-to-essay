@@ -7,6 +7,7 @@ import {
   getSubscriptionByUserAndChannel,
 } from "@/app/lib/db";
 import { resolveChannel } from "@/app/lib/youtube";
+import { getPostHogClient } from "@/app/lib/posthog";
 
 export async function GET() {
   let user;
@@ -60,6 +61,14 @@ export async function POST(request: NextRequest) {
       channel.id,
       playlistIds ?? null,
     );
+    getPostHogClient()?.capture({
+      distinctId: user.id,
+      event: "channel_subscribed",
+      properties: {
+        channel_name: channelInfo.name,
+        youtube_channel_id: channelInfo.channelId,
+      },
+    });
     return NextResponse.json({
       subscription_id: subId,
       channel_id: channel.id,

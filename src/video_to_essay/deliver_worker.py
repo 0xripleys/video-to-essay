@@ -7,6 +7,7 @@ import time
 import sentry_sdk
 
 from . import db
+from .analytics import capture as track
 from .email_sender import send_essay
 from .s3 import download_file
 
@@ -42,6 +43,10 @@ def _deliver() -> None:
             logger.info("delivery=%s: sending to %s (%s)", did, email, title)
             send_essay(email, title, essay, channel_name=channel_name)
             db.mark_delivery_sent(did)
+            track("email_delivered", {
+                "youtube_video_id": vid,
+                "recipient": email,
+            })
             logger.info("delivery=%s: sent successfully", did)
         except Exception:
             logger.exception("delivery=%s: failed sending to %s", did, email)

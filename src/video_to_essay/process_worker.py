@@ -10,6 +10,7 @@ from pathlib import Path
 import sentry_sdk
 
 from . import db
+from .analytics import capture as track
 from .diarize import transcribe_with_deepgram
 from .extract_frames import extract_and_classify, parse_transcript
 from .filter_sponsors import filter_sponsors
@@ -118,6 +119,10 @@ def _process_one(video: dict) -> None:
     ])
 
     db.mark_video_processed(video["id"])
+    track("video_processed", {
+        "youtube_video_id": youtube_video_id,
+        "video_title": video.get("video_title", "untitled"),
+    })
     print(f"Process: completed {youtube_video_id} ({video.get('video_title', 'untitled')})")
 
 

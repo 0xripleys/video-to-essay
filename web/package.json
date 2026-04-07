@@ -13,6 +13,8 @@
     "@workos-inc/node": "^8.10.0",
     "next": "^15.3.0",
     "pg": "^8.20.0",
+    "posthog-js": "^1.365.0",
+    "posthog-node": "^5.29.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },

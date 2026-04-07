@@ -126,6 +126,9 @@ All stored in `.env` at project root:
 | `AWS_REGION` | Workers + Web | S3 bucket region (default: us-east-1) |
 | `SENTRY_DSN` | Workers + CLI | Sentry DSN for Python error monitoring |
 | `NEXT_PUBLIC_SENTRY_DSN` | Web | Sentry DSN for Next.js error monitoring |
+| `NEXT_PUBLIC_POSTHOG_KEY` | Web | PostHog project API key (client + server) |
+| `NEXT_PUBLIC_POSTHOG_HOST` | Web | PostHog ingest host (default: us.i.posthog.com) |
+| `POSTHOG_API_KEY` | Workers | PostHog project API key for server-side events |
 
 ## Dependencies Beyond pip/npm
 

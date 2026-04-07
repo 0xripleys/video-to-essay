@@ -6,6 +6,7 @@ import {
   updateSubscriptionInterval,
   updateSubscriptionPlaylists,
 } from "@/app/lib/db";
+import { getPostHogClient } from "@/app/lib/posthog";
 
 export async function DELETE(
   _request: NextRequest,
@@ -28,6 +29,11 @@ export async function DELETE(
   }
 
   await deactivateSubscription(subId);
+  getPostHogClient()?.capture({
+    distinctId: user.id,
+    event: "channel_unsubscribed",
+    properties: { subscription_id: subId },
+  });
   return NextResponse.json({ status: "unsubscribed" });
 }
 

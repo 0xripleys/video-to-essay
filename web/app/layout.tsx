@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import "./globals.css";
 import AppShell from "./components/AppShell";
+import PostHogProvider from "./providers/PostHogProvider";
 
 export const metadata: Metadata = {
   title: "Scrivi",
@@ -15,7 +17,11 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="bg-stone-50 text-stone-900 antialiased">
-        <AppShell>{children}</AppShell>
+        <Suspense fallback={null}>
+          <PostHogProvider>
+            <AppShell>{children}</AppShell>
+          </PostHogProvider>
+        </Suspense>
       </body>
     </html>
   );
