@@ -129,11 +129,11 @@ def _timestamp_instructions(video_id: str) -> str:
     base_url = f"https://youtube.com/watch?v={video_id}"
     return f"""\
 ## Timestamp links
-The transcript contains timestamps like [MM:SS]. Convert each one into a markdown \
-link that jumps to that point in the YouTube video. Format: [MM:SS]({base_url}&t=Xs) \
-where X is the total seconds (e.g. [05:30]({base_url}&t=330s)). Place these links \
-at the start of each section or speaker turn — wherever a timestamp appeared in the \
-original transcript."""
+The transcript contains timestamps like [MM:SS]. Embed a timestamp link into each \
+section heading so readers can jump to that point in the YouTube video. \
+Format: ## [MM:SS]({base_url}&t=Xs) Section Title \
+where X is the total seconds. Example: ## [05:30]({base_url}&t=330s) Portfolio Construction \
+Do NOT place timestamps on their own line — they must be part of the heading."""
 
 
 def _transcript_to_essay_single(

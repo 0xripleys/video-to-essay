@@ -1,5 +1,6 @@
 """Worker orchestrator: starts all background worker threads."""
 
+import logging
 import threading
 
 from .deliver_worker import deliver_loop
@@ -10,6 +11,11 @@ from .process_worker import process_loop
 
 def start_worker_threads() -> list[threading.Thread]:
     """Start all worker loops in daemon threads."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
     workers = [
         ("discover", discover_loop, 60.0),
         ("download", download_loop, 10.0),

@@ -48,11 +48,6 @@ def _deliver() -> None:
 
 def deliver_loop(poll_interval: float = 15.0) -> None:
     """Poll for pending deliveries and send emails."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
     logger.info("Deliver worker started (polling every %.1fs)", poll_interval)
     for key in ("DATABASE_URL", "AGENTMAIL_API_KEY", "AGENTMAIL_INBOX_ID", "S3_BUCKET_NAME"):
         val = os.environ.get(key)

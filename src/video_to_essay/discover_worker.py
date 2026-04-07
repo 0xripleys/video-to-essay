@@ -10,6 +10,7 @@ import httpx
 from . import db
 
 PLAYLIST_ITEMS_URL = "https://www.googleapis.com/youtube/v3/playlistItems"
+VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
 
 
 def _uploads_playlist_id(channel_id: str) -> str:
@@ -71,6 +72,29 @@ def _check_playlist_membership(
     return matched
 
 
+def _filter_active_livestreams(video_ids: list[str], api_key: str) -> set[str]:
+    """Return the set of video IDs that are upcoming or currently live (not yet downloadable)."""
+    active = set()
+    # videos.list accepts up to 50 IDs per request
+    for i in range(0, len(video_ids), 50):
+        batch = video_ids[i : i + 50]
+        resp = httpx.get(
+            VIDEOS_URL,
+            params={
+                "id": ",".join(batch),
+                "part": "liveStreamingDetails",
+                "key": api_key,
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        for item in resp.json().get("items", []):
+            details = item.get("liveStreamingDetails")
+            if details and "actualEndTime" not in details:
+                active.add(item["id"])
+    return active
+
+
 def _check_channel(channel: dict, api_key: str) -> int:
     """Fetch uploads playlist for a channel and insert any new videos. Returns count of new videos."""
     youtube_channel_id = channel["youtube_channel_id"]
@@ -82,7 +106,8 @@ def _check_channel(channel: dict, api_key: str) -> int:
     if cutoff.tzinfo is None:
         cutoff = cutoff.replace(tzinfo=timezone.utc)
 
-    new_count = 0
+    # Collect candidate videos first, then filter and insert
+    candidates: list[dict] = []
     page_token: str | None = None
 
     while True:
@@ -126,22 +151,40 @@ def _check_channel(channel: dict, api_key: str) -> int:
             if membership is not None and len(membership) == 0:
                 continue  # no subscriber wants this video
 
-            title = snippet.get("title")
-            video_url = f"https://www.youtube.com/watch?v={video_id}"
-
-            db.create_video(
-                youtube_video_id=video_id,
-                youtube_url=video_url,
-                channel_id=channel["id"],
-                video_title=title,
-                matched_playlist_ids=membership,
-            )
-            new_count += 1
+            candidates.append({
+                "video_id": video_id,
+                "title": snippet.get("title"),
+                "membership": membership,
+            })
 
         # Stop paginating if we hit old videos or there are no more pages
         if found_old or "nextPageToken" not in data:
             break
         page_token = data["nextPageToken"]
+
+    # Filter out upcoming/active livestreams
+    if candidates:
+        active_streams = _filter_active_livestreams(
+            [c["video_id"] for c in candidates], api_key
+        )
+        if active_streams:
+            print(f"Discover: skipping {len(active_streams)} active/upcoming livestream(s)")
+    else:
+        active_streams = set()
+
+    new_count = 0
+    for c in candidates:
+        if c["video_id"] in active_streams:
+            continue
+        video_url = f"https://www.youtube.com/watch?v={c['video_id']}"
+        db.create_video(
+            youtube_video_id=c["video_id"],
+            youtube_url=video_url,
+            channel_id=channel["id"],
+            video_title=c["title"],
+            matched_playlist_ids=c["membership"],
+        )
+        new_count += 1
 
     db.update_channel_checked(channel["id"])
     return new_count
