@@ -1,7 +1,10 @@
 """Worker orchestrator: starts all background worker threads."""
 
 import logging
+import os
 import threading
+
+import sentry_sdk
 
 from .deliver_worker import deliver_loop
 from .discover_worker import discover_loop
@@ -11,6 +14,14 @@ from .process_worker import process_loop
 
 def start_worker_threads() -> list[threading.Thread]:
     """Start all worker loops in daemon threads."""
+    sentry_dsn = os.environ.get("SENTRY_DSN")
+    if sentry_dsn:
+        sentry_sdk.init(
+            dsn=sentry_dsn,
+            traces_sample_rate=1.0,
+            environment=os.environ.get("SENTRY_ENVIRONMENT", "production"),
+        )
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",

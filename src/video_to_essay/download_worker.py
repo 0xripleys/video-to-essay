@@ -7,6 +7,8 @@ import traceback
 import time
 from pathlib import Path
 
+import sentry_sdk
+
 from . import db
 from .s3 import upload_run
 from .transcriber import download_video, fetch_video_metadata
@@ -89,9 +91,11 @@ def download_loop(poll_interval: float = 10.0) -> None:
                 try:
                     _download_one(video)
                 except Exception:
+                    sentry_sdk.capture_exception()
                     traceback.print_exc()
                     db.mark_video_failed(video["id"], f"Download failed: {traceback.format_exc()}")
                     print(f"  [{vid}] FAILED")
         except Exception:
+            sentry_sdk.capture_exception()
             traceback.print_exc()
         time.sleep(poll_interval)

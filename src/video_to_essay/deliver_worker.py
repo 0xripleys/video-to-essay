@@ -4,6 +4,8 @@ import logging
 import os
 import time
 
+import sentry_sdk
+
 from . import db
 from .email_sender import send_essay
 from .s3 import download_file
@@ -59,5 +61,6 @@ def deliver_loop(poll_interval: float = 15.0) -> None:
                 logger.info("Created %d subscription deliveries", created)
             _deliver()
         except Exception:
+            sentry_sdk.capture_exception()
             logger.exception("Unexpected error in deliver loop")
         time.sleep(poll_interval)

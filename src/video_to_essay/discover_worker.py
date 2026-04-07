@@ -6,6 +6,7 @@ import time
 from datetime import datetime, timezone
 
 import httpx
+import sentry_sdk
 
 from . import db
 
@@ -209,8 +210,10 @@ def discover_loop(poll_interval: float = 60.0) -> None:
                     if new:
                         print(f"Discover: {new} new video(s) from {channel['name']}")
                 except Exception:
+                    sentry_sdk.capture_exception()
                     traceback.print_exc()
                     print(f"Discover: error checking channel {channel.get('name', channel['id'])}")
         except Exception:
+            sentry_sdk.capture_exception()
             traceback.print_exc()
         time.sleep(poll_interval)

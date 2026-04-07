@@ -7,6 +7,8 @@ import traceback
 import time
 from pathlib import Path
 
+import sentry_sdk
+
 from . import db
 from .diarize import transcribe_with_deepgram
 from .extract_frames import extract_and_classify, parse_transcript
@@ -132,9 +134,11 @@ def process_loop(poll_interval: float = 10.0) -> None:
                 try:
                     _process_one(video)
                 except Exception:
+                    sentry_sdk.capture_exception()
                     traceback.print_exc()
                     db.mark_video_failed(video["id"], f"Processing failed: {traceback.format_exc()}")
                     print(f"Process: failed {video['youtube_video_id']}")
         except Exception:
+            sentry_sdk.capture_exception()
             traceback.print_exc()
         time.sleep(poll_interval)

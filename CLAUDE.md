@@ -28,7 +28,16 @@ cd web && npm install && npm run dev       # Dev server on :3000
 
 ### Workers (background processing)
 
-Workers are started by importing `start_worker_threads()` from `video_to_essay.worker`. They require `DATABASE_URL`, `ANTHROPIC_API_KEY`, `DEEPGRAM_API_KEY`, `AGENTMAIL_API_KEY`, `AGENTMAIL_INBOX_ID` in `.env`.
+Workers are started by importing `start_worker_threads()` from `video_to_essay.worker`. They require `DATABASE_URL`, `ANTHROPIC_API_KEY`, `DEEPGRAM_API_KEY`, `AGENTMAIL_API_KEY`, `AGENTMAIL_INBOX_ID`, `YOUTUBE_API_KEY` in `.env`.
+
+On macOS, each worker runs as a LaunchAgent (`~/Library/LaunchAgents/com.video-to-essay.*.plist`). To restart:
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.video-to-essay.*.plist
+launchctl load ~/Library/LaunchAgents/com.video-to-essay.*.plist
+```
+
+Logs are written to `logs/` (`discover.log`, `download.log`, `process.log`, `deliver.log`).
 
 ### No test suite
 
@@ -107,6 +116,7 @@ All stored in `.env` at project root:
 | `DEEPGRAM_API_KEY` | Workers (process) | Deepgram Nova-3 transcription |
 | `AGENTMAIL_API_KEY` | Workers (deliver) | Email sending |
 | `AGENTMAIL_INBOX_ID` | Workers (deliver) | AgentMail sender inbox |
+| `YOUTUBE_API_KEY` | Workers (discover) | YouTube Data API for polling new uploads |
 | `WORKOS_API_KEY` | Web | Auth (unset = dev mode) |
 | `WORKOS_CLIENT_ID` | Web | Auth |
 | `WORKOS_COOKIE_PASSWORD` | Web | Session cookie encryption |
@@ -114,6 +124,8 @@ All stored in `.env` at project root:
 | `AWS_ACCESS_KEY_ID` | Workers + Web | AWS auth for S3 |
 | `AWS_SECRET_ACCESS_KEY` | Workers + Web | AWS auth for S3 |
 | `AWS_REGION` | Workers + Web | S3 bucket region (default: us-east-1) |
+| `SENTRY_DSN` | Workers + CLI | Sentry DSN for Python error monitoring |
+| `NEXT_PUBLIC_SENTRY_DSN` | Web | Sentry DSN for Next.js error monitoring |
 
 ## Dependencies Beyond pip/npm
 
