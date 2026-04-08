@@ -7,6 +7,8 @@ import traceback
 import time
 from pathlib import Path
 
+import httpx
+
 import sentry_sdk
 
 from . import db
@@ -24,6 +26,8 @@ from .summarize import summarize_essay
 from .transcriber import transcript_to_essay
 
 RUNS_DIR = Path("runs")
+MAX_RETRIES = 3
+TRANSIENT_ERRORS = (httpx.RemoteProtocolError, httpx.ReadError, httpx.ConnectError, ConnectionError)
 
 STEP_DIRS: dict[str, str] = {
     "transcript": "01_transcript",
@@ -140,13 +144,27 @@ def process_loop(poll_interval: float = 10.0) -> None:
         try:
             videos = db.get_videos_pending_processing()
             for video in videos:
-                try:
-                    _process_one(video)
-                except Exception:
-                    sentry_sdk.capture_exception()
-                    traceback.print_exc()
-                    db.mark_video_failed(video["id"], f"Processing failed: {traceback.format_exc()}")
-                    print(f"Process: failed {video['youtube_video_id']}")
+                for attempt in range(1, MAX_RETRIES + 1):
+                    try:
+                        _process_one(video)
+                        break
+                    except TRANSIENT_ERRORS:
+                        if attempt < MAX_RETRIES:
+                            wait = 2 ** attempt
+                            print(f"Process: transient error on {video['youtube_video_id']} (attempt {attempt}/{MAX_RETRIES}), retrying in {wait}s")
+                            traceback.print_exc()
+                            time.sleep(wait)
+                        else:
+                            sentry_sdk.capture_exception()
+                            traceback.print_exc()
+                            db.mark_video_failed(video["id"], f"Processing failed after {MAX_RETRIES} attempts: {traceback.format_exc()}")
+                            print(f"Process: failed {video['youtube_video_id']}")
+                    except Exception:
+                        sentry_sdk.capture_exception()
+                        traceback.print_exc()
+                        db.mark_video_failed(video["id"], f"Processing failed: {traceback.format_exc()}")
+                        print(f"Process: failed {video['youtube_video_id']}")
+                        break
         except Exception:
             sentry_sdk.capture_exception()
             traceback.print_exc()
