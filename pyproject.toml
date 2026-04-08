@@ -9,6 +9,7 @@ dependencies = [
     "boto3>=1.38.0",
     "imagehash>=4.3.2",
     "markdown>=3.7",
+    "openai>=1.50",
     "opencv-python>=4.13.0.92",
     "pillow>=12.1.1",
     "psycopg[binary]>=3.3.3",

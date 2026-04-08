@@ -1,8 +1,9 @@
 """Generate a Key Takeaways section and prepend it to an essay."""
 
-import json
 import re
 from pathlib import Path
+
+from . import llm_client
 
 
 def summarize_essay(essay_path: Path, force: bool = False) -> None:
@@ -11,8 +12,6 @@ def summarize_essay(essay_path: Path, force: bool = False) -> None:
     Skips if the essay already contains a ## Key Takeaways section (unless force=True).
     Overwrites the essay file in place.
     """
-    import anthropic
-
     text = essay_path.read_text()
 
     if re.search(r"^#{1,3}\s+Key Takeaways", text, re.MULTILINE) and not force:
@@ -23,41 +22,37 @@ def summarize_essay(essay_path: Path, force: bool = False) -> None:
     text = _strip_takeaways(text)
 
     print("Generating Key Takeaways...")
-    client = anthropic.Anthropic()
 
     tool = {
-        "name": "key_takeaways",
-        "description": "Return 3-5 key takeaways from the essay.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "takeaways": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "minItems": 3,
-                    "maxItems": 5,
-                    "description": "Each takeaway is one concise sentence capturing a main argument, finding, or insight. Be specific and concrete. Do NOT start with 'The video...' or 'The author...'.",
-                },
+        "type": "object",
+        "properties": {
+            "takeaways": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 3,
+                "maxItems": 5,
+                "description": (
+                    "Each takeaway is one concise sentence capturing a main argument, "
+                    "finding, or insight. Be specific and concrete. Do NOT start "
+                    "with 'The video...' or 'The author...'."
+                ),
             },
-            "required": ["takeaways"],
         },
+        "required": ["takeaways"],
     }
 
-    msg = client.messages.create(
-        model="claude-sonnet-4-5-20250929",
+    tool_input = llm_client.text_complete_with_tool(
+        user=text,
         max_tokens=1024,
+        model_class="smart",
         system=(
             "You extract key takeaways from essays. Use the key_takeaways tool to return them."
         ),
-        messages=[{
-            "role": "user",
-            "content": text,
-        }],
-        tools=[tool],
-        tool_choice={"type": "tool", "name": "key_takeaways"},
+        tool_name="key_takeaways",
+        tool_description="Return 3-5 key takeaways from the essay.",
+        tool_schema=tool,
     )
 
-    tool_input = next(b for b in msg.content if b.type == "tool_use").input
     takeaways = tool_input["takeaways"][:5]
     bullets = "\n\n".join(f"- {t}" for t in takeaways)
 
