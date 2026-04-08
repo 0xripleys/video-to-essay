@@ -78,6 +78,7 @@ def _process_one(video: dict) -> None:
     essay_path = essay_dir / "essay.md"
     essay_path.write_text(essay_text)
     summarize_essay(essay_path)
+    essay_text = essay_path.read_text()
 
     # Step 4: Extract frames
     frames_dir = _step_dir(run_dir, "frames")
