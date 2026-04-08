@@ -24,4 +24,4 @@ def capture(event: str, properties: dict | None = None) -> None:
     """Capture a server-side event. Uses 'worker' as the distinct_id."""
     ph = get_posthog()
     if ph:
-        ph.capture("worker", event, properties or {})
+        ph.capture(event, distinct_id="worker", properties=properties or {})

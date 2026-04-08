@@ -41,7 +41,21 @@ def _deliver() -> None:
             title = d.get("video_title") or "Untitled Video"
             channel_name = d.get("channel_name")
             logger.info("delivery=%s: sending to %s (%s)", did, email, title)
-            send_essay(email, title, essay, channel_name=channel_name, video_id=d["video_id"])
+
+            max_retries = 3
+            for attempt in range(1, max_retries + 1):
+                try:
+                    send_essay(email, title, essay, channel_name=channel_name, video_id=d["video_id"])
+                    break
+                except Exception as send_err:
+                    is_rate_limit = "429" in str(send_err) or "RateLimitError" in str(send_err)
+                    if is_rate_limit and attempt < max_retries:
+                        wait = 2 ** attempt
+                        logger.warning("delivery=%s: rate limited (attempt %d/%d), retrying in %ds", did, attempt, max_retries, wait)
+                        time.sleep(wait)
+                    else:
+                        raise
+
             db.mark_delivery_sent(did)
             track("email_delivered", {
                 "youtube_video_id": vid,
@@ -49,12 +63,15 @@ def _deliver() -> None:
             })
             logger.info("delivery=%s: sent successfully", did)
         except Exception:
+            sentry_sdk.capture_exception()
             logger.exception("delivery=%s: failed sending to %s", did, email)
             db.mark_delivery_failed(did, "Send failed")
 
 
 def deliver_loop(poll_interval: float = 15.0) -> None:
     """Poll for pending deliveries and send emails."""
+    from .worker import init_sentry
+    init_sentry()
     logger.info("Deliver worker started (polling every %.1fs)", poll_interval)
     for key in ("DATABASE_URL", "AGENTMAIL_API_KEY", "AGENTMAIL_INBOX_ID", "S3_BUCKET_NAME"):
         val = os.environ.get(key)

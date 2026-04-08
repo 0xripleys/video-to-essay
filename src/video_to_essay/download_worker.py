@@ -75,6 +75,8 @@ def _download_one(video: dict) -> None:
 
 def download_loop(poll_interval: float = 10.0) -> None:
     """Poll for videos pending download and process them."""
+    from .worker import init_sentry
+    init_sentry()
     print(f"Download worker started (polling every {poll_interval}s)")
     for key in ("DATABASE_URL", "S3_BUCKET_NAME", "PROXY_URL"):
         val = os.environ.get(key)
