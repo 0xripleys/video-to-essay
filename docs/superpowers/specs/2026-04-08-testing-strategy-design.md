@@ -1,7 +1,7 @@
 # Testing Strategy — Comprehensive Test Wishlist
 
 **Date:** 2026-04-08
-**Status:** Draft
+**Status:** In Progress — pure tests complete (43/43), remaining: db, db+mock, db+s3, smoke
 
 ## Overview
 
@@ -251,18 +251,18 @@ A comprehensive inventory of tests for the video-to-essay project, organized by 
 
 ## Summary by Infrastructure
 
-| Tag | Count | What it catches | Infrastructure |
-|-----|-------|-----------------|---------------|
-| [pure] | 43 | Parsing bugs, formatting regressions, data transformation errors | Nothing |
-| [db] | 26 | SQL bugs, schema drift, query logic errors | Testcontainers Postgres |
-| [db+mock] | 6 | Worker pipeline logic, state machine errors | Postgres + mocked YouTube/S3/email APIs |
-| [db+s3] | 1 | S3 integration in API routes | Postgres + LocalStack |
-| [smoke] | 5 | Build failures, import errors, lint regressions | Build tools only |
-| **Total** | **81** | | |
+| Tag | Count | What it catches | Infrastructure | Status |
+|-----|-------|-----------------|---------------|--------|
+| [pure] | 43 | Parsing bugs, formatting regressions, data transformation errors | Nothing | **Done** (86 pytest cases) |
+| [db] | 26 | SQL bugs, schema drift, query logic errors | Testcontainers Postgres | Not started |
+| [db+mock] | 6 | Worker pipeline logic, state machine errors | Postgres + mocked YouTube/S3/email APIs | Not started |
+| [db+s3] | 1 | S3 integration in API routes | Postgres + LocalStack | Not started |
+| [smoke] | 5 | Build failures, import errors, lint regressions | Build tools only | Not started |
+| **Total** | **81** | | | |
 
 ## Recommended Implementation Order
 
-1. **[pure] tests (43)** — Zero infrastructure, runs in <1s. Highest ROI.
+1. ~~**[pure] tests (43)** — Zero infrastructure, runs in <1s. Highest ROI.~~ **Done** (2026-04-08)
 2. **[smoke] tests (5)** — One-liners that catch build/import/lint regressions.
 3. **[db] tests (26)** — Add Testcontainers fixture, test all SQL queries.
 4. **[db+mock] worker tests (6)** — Add after the above are stable.
