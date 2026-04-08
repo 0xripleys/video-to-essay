@@ -17,11 +17,14 @@ full-document call (needs global view). Aggregate chunk scores via mean (or min
 for hallucination).
 """
 
+import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import anthropic
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "claude-sonnet-4-5-20250929"
 
@@ -178,7 +181,7 @@ def _api_call_with_retry(
             if attempt == max_retries - 1:
                 raise
             wait = 2 ** attempt * 15  # 15s, 30s, 60s
-            print(f"    Rate limited, retrying in {wait}s...")
+            logger.warning("Rate limited, retrying in %ds...", wait)
             time.sleep(wait)
     raise RuntimeError("Unreachable")
 
@@ -249,7 +252,7 @@ def score_essay(
         for future in as_completed(futures):
             name = futures[future]
             dimensions[name] = future.result()
-            print(f"  {name}: {dimensions[name]['score']}/10")
+            logger.info("%s: %d/10", name, dimensions[name]["score"])
 
     scores = [dimensions[name]["score"] for name in dimension_names]
     summary = " ".join(

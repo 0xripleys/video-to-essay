@@ -7,12 +7,15 @@ Used as a library by main.py. Not intended to be run directly.
 import base64
 import io
 import json
+import logging
 import re
 import time
 from pathlib import Path
 
 import anthropic
 from PIL import Image
+
+logger = logging.getLogger(__name__)
 
 
 def _stream_message(client: anthropic.Anthropic, **kwargs: object) -> str:
@@ -32,7 +35,7 @@ def _stream_message(client: anthropic.Anthropic, **kwargs: object) -> str:
             if attempt == max_retries - 1:
                 raise
             wait = 2 ** attempt * 15  # 15, 30, 60, 120s
-            print(f"  Rate limited, waiting {wait}s (attempt {attempt + 1}/{max_retries})...")
+            logger.warning("Rate limited, waiting %ds (attempt %d/%d)...", wait, attempt + 1, max_retries)
             time.sleep(wait)
     return ""  # unreachable
 
@@ -85,7 +88,7 @@ def place_images_in_essay(
     if not kept_frames:
         raise ValueError("No kept frames to place")
 
-    print(f"Inserting {len(kept_frames)} images into essay...")
+    logger.info("Inserting %d images into essay...", len(kept_frames))
 
     frame_list = format_frame_list(kept_frames, image_prefix)
 
@@ -208,7 +211,7 @@ def annotate_essay(
     if not figures:
         raise ValueError("No images found in essay. Nothing to annotate.")
 
-    print(f"Numbered {len(figures)} figures. Adding references via LLM in batches of {batch_size}...")
+    logger.info("Numbered %d figures. Adding references via LLM in batches of %d...", len(figures), batch_size)
 
     # Step 2: LLM returns insertion instructions as JSON
     client = anthropic.Anthropic()
@@ -220,7 +223,7 @@ def annotate_essay(
             f"- Figure {num}: {alt}" for num, alt, _src in batch
         )
         batch_nums = ", ".join(str(num) for num, _, _ in batch)
-        print(f"  Batch: Figure {batch_nums}...")
+        logger.info("  Batch: Figure %s...", batch_nums)
 
         msg = client.messages.create(
             model="claude-sonnet-4-5-20250929",
@@ -260,13 +263,13 @@ def annotate_essay(
                 if find_text and replace_text and find_text in result:
                     result = result.replace(find_text, replace_text, 1)
         except (json.JSONDecodeError, KeyError) as e:
-            print(f"  WARNING: Could not parse annotation batch: {e}")
+            logger.warning("Could not parse annotation batch: %s", e)
 
     # Report figure reference coverage
     for num, alt, _src in figures:
         ref_count = len(re.findall(rf"Figure\s+{num}\b", result)) - 1  # subtract the caption itself
         status = "ok" if ref_count > 0 else "MISSING"
-        print(f"  Figure {num}: {ref_count} reference(s) [{status}] — {alt[:60]}")
+        logger.info("  Figure %d: %d reference(s) [%s] — %s", num, ref_count, status, alt[:60])
 
     return result
 
@@ -319,13 +322,11 @@ def _print_image_stats(
     kept_names = {str(f["frame"]) for f in kept}
 
     total_placed = len(placed_names) or data_uri_count
-    print("\nImage placement stats:")
-    print(f"  Available: {len(kept_names)}")
-    print(f"  Placed:    {total_placed}")
+    logger.info("Image placement stats: available=%d, placed=%d", len(kept_names), total_placed)
     if placed_names:
         missing = kept_names - placed_names
         if missing:
-            print(f"  Missing:   {', '.join(sorted(missing))}")
+            logger.info("  Missing: %s", ", ".join(sorted(missing)))
         extra = placed_names - kept_names
         if extra:
-            print(f"  Extra:     {', '.join(sorted(extra))}")
+            logger.info("  Extra: %s", ", ".join(sorted(extra)))

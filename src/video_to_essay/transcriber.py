@@ -5,11 +5,14 @@ Used as a library by main.py. Not intended to be run directly.
 """
 
 import json
+import logging
 import os
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def _stream_message(client: "anthropic.Anthropic", **kwargs: object) -> str:
@@ -141,9 +144,9 @@ def _transcript_to_essay_single(
     video_id: str | None = None,
 ) -> str:
     """Single-speaker essay generation (original path)."""
-    print("Extracting style profile from transcript...")
+    logger.info("Extracting style profile from transcript...")
     style_profile = extract_style_profile(transcript, api_key=api_key)
-    print("Style profile extracted. Generating essay...")
+    logger.info("Style profile extracted. Generating essay...")
 
     system_prompt = f"""\
 You are converting a YouTube video transcript into a readable essay. Your #1 job \
@@ -221,11 +224,11 @@ def _transcript_to_essay_multi(
 ) -> str:
     """Multi-speaker essay generation (dialogue-style)."""
     speakers = _extract_speakers(transcript)
-    print(f"Multi-speaker transcript detected: {', '.join(speakers)}")
+    logger.info("Multi-speaker transcript detected: %s", ", ".join(speakers))
 
-    print("Extracting per-speaker style profiles...")
+    logger.info("Extracting per-speaker style profiles...")
     style_profile = extract_multi_speaker_style_profile(transcript, api_key=api_key)
-    print("Style profiles extracted. Generating dialogue essay...")
+    logger.info("Style profiles extracted. Generating dialogue essay...")
 
     speaker_list = "\n".join(f"- {s}" for s in speakers)
 
@@ -403,7 +406,7 @@ def download_video(
             f"yt-dlp selected a video-only format (acodec=none) for {video_id}. "
             f"No audio would be available for transcription."
         )
-    print(f"Format check passed (acodec={acodec}), downloading video {video_id}...")
+    logger.info("Format check passed (acodec=%s), downloading video %s...", acodec, video_id)
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
 
     if result.returncode != 0:

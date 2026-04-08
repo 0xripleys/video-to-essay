@@ -1,7 +1,7 @@
 """Discover worker: polls YouTube Data API for new videos on subscribed channels."""
 
+import logging
 import os
-import traceback
 import time
 from datetime import datetime, timezone
 
@@ -9,6 +9,8 @@ import httpx
 import sentry_sdk
 
 from . import db
+
+logger = logging.getLogger(__name__)
 
 PLAYLIST_ITEMS_URL = "https://www.googleapis.com/youtube/v3/playlistItems"
 VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
@@ -241,9 +243,9 @@ def _check_channel(channel: dict, api_key: str) -> int:
         new_count += 1
 
     if skipped_shorts:
-        print(f"Discover: skipped {skipped_shorts} short(s)")
+        logger.info("Discover: skipped %d short(s)", skipped_shorts)
     if skipped_livestreams:
-        print(f"Discover: skipped {skipped_livestreams} livestream(s) (all subscribers exclude)")
+        logger.info("Discover: skipped %d livestream(s) (all subscribers exclude)", skipped_livestreams)
 
     db.update_channel_checked(channel["id"])
     return new_count
@@ -253,14 +255,14 @@ def discover_loop(poll_interval: float = 60.0) -> None:
     """Poll for channels due for a check and discover new videos."""
     from .worker import init_sentry
     init_sentry()
-    print(f"Discover worker started (polling every {poll_interval}s)")
+    logger.info("Discover worker started (polling every %ss)", poll_interval)
     api_key = os.environ.get("YOUTUBE_API_KEY")
     if not api_key:
-        print("  YOUTUBE_API_KEY: NOT SET — discover worker cannot run")
+        logger.error("YOUTUBE_API_KEY: NOT SET — discover worker cannot run")
         return
     for key in ("DATABASE_URL", "YOUTUBE_API_KEY"):
         val = os.environ.get(key)
-        print(f"  {key}: {'set' if val else 'NOT SET'}")
+        logger.info("  %s: %s", key, "set" if val else "NOT SET")
     while True:
         try:
             channels = db.get_channels_due_for_check()
@@ -268,12 +270,11 @@ def discover_loop(poll_interval: float = 60.0) -> None:
                 try:
                     new = _check_channel(channel, api_key)
                     if new:
-                        print(f"Discover: {new} new video(s) from {channel['name']}")
+                        logger.info("Discover: %d new video(s) from %s", new, channel["name"])
                 except Exception:
                     sentry_sdk.capture_exception()
-                    traceback.print_exc()
-                    print(f"Discover: error checking channel {channel.get('name', channel['id'])}")
+                    logger.exception("Discover: error checking channel %s", channel.get("name", channel["id"]))
         except Exception:
             sentry_sdk.capture_exception()
-            traceback.print_exc()
+            logger.exception("Discover: error in poll loop")
         time.sleep(poll_interval)

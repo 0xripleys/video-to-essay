@@ -12,6 +12,7 @@ Pipeline:
 
 import base64
 import json
+import logging
 import re
 import subprocess
 from pathlib import Path
@@ -20,6 +21,8 @@ import anthropic
 import cv2
 import imagehash
 from PIL import Image
+
+logger = logging.getLogger(__name__)
 
 
 def parse_transcript(transcript: str) -> list[tuple[int, str]]:
@@ -235,10 +238,11 @@ def classify_frames(
         parsed["file"] = str(frame_path)
         results.append(parsed)
 
-        print(
-            f"  [{timestamp}] {frame_path.name}: "
-            f"{parsed.get('category', '?')} (value={parsed.get('value', '?')}) "
-            f"- {parsed.get('description', '')[:80]}"
+        logger.info(
+            "[%s] %s: %s (value=%s) - %s",
+            timestamp, frame_path.name,
+            parsed.get("category", "?"), parsed.get("value", "?"),
+            parsed.get("description", "")[:80],
         )
 
     return results
@@ -278,9 +282,9 @@ def extract_and_classify(
 
     # Step 1: Sample frames
     raw_dir = output_dir / "raw"
-    print(f"Step 1: Sampling 1 frame every {interval}s...")
+    logger.info("Step 1: Sampling 1 frame every %ds...", interval)
     frames = sample_frames(video, raw_dir, interval)
-    print(f"  Extracted {len(frames)} frames")
+    logger.info("  Extracted %d frames", len(frames))
 
     # Step 1b: Drop frames in sponsor ranges
     if sponsor_ranges:
@@ -291,20 +295,20 @@ def extract_and_classify(
         ]
         dropped = before - len(frames)
         if dropped:
-            print(f"  Dropped {dropped} frames in sponsor ranges")
+            logger.info("  Dropped %d frames in sponsor ranges", dropped)
 
     # Step 2: Dedup
-    print(f"Step 2: Deduplicating (max Hamming distance={max_hamming})...")
+    logger.info("Step 2: Deduplicating (max Hamming distance=%d)...", max_hamming)
     hashes = compute_hashes(frames)
     unique_frames = dedup_frames(frames, hashes, max_hamming)
-    print(f"  {len(frames)} -> {len(unique_frames)} unique frames")
+    logger.info("  %d -> %d unique frames", len(frames), len(unique_frames))
 
     # Step 3: Classify with vision LLM
-    print(f"Step 3: Classifying {len(unique_frames)} frames with Claude Haiku...")
+    logger.info("Step 3: Classifying %d frames with Claude Haiku...", len(unique_frames))
     classifications = classify_frames(unique_frames, interval, transcript_entries)
 
     # Step 4: Filter
-    print(f"\nStep 4: Filtering (min_value={min_value}, skip={skip_categories})...")
+    logger.info("Step 4: Filtering (min_value=%d, skip=%s)...", min_value, skip_categories)
     kept: list[dict[str, str | int]] = []
     for c in classifications:
         if c.get("category") in skip_categories:
@@ -324,20 +328,17 @@ def extract_and_classify(
     results_path = output_dir / "classifications.json"
     results_path.write_text(json.dumps(classifications, indent=2))
 
-    print("\nResults:")
-    print(f"  Total sampled:    {len(frames)}")
-    print(f"  After dedup:      {len(unique_frames)}")
-    print(f"  After filtering:  {len(kept)}")
-    print(f"  Kept frames in:   {kept_dir}")
-    print(f"  Full results:     {results_path}")
+    logger.info("Results: sampled=%d, deduped=%d, kept=%d", len(frames), len(unique_frames), len(kept))
+    logger.info("  Kept frames in: %s", kept_dir)
+    logger.info("  Full results:   %s", results_path)
 
     if kept:
-        print("\nKept frames:")
         for item in kept:
-            print(
-                f"  [{item['timestamp']}] {item['frame']}: "
-                f"{item['category']} (value={item['value']}) "
-                f"- {item.get('description', '')[:80]}"
+            logger.info(
+                "  [%s] %s: %s (value=%s) - %s",
+                item["timestamp"], item["frame"],
+                item["category"], item["value"],
+                item.get("description", "")[:80],
             )
 
     return kept

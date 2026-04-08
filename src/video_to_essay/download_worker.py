@@ -1,10 +1,11 @@
 """Download worker: downloads videos via yt-dlp, uploads to S3, marks as downloaded."""
 
 import json
+import logging
 import os
 import subprocess
-import traceback
 import time
+import traceback
 from pathlib import Path
 
 import sentry_sdk
@@ -12,6 +13,8 @@ import sentry_sdk
 from . import db
 from .s3 import upload_run
 from .transcriber import download_video, fetch_video_metadata
+
+logger = logging.getLogger(__name__)
 
 RUNS_DIR = Path("runs")
 
@@ -24,7 +27,7 @@ def _download_one(video: dict) -> None:
 
     # Clean up partial downloads
     for part_file in run_dir.glob("video.*.part"):
-        print(f"  [{video_id}] Removing partial download: {part_file.name}")
+        logger.info("[%s] Removing partial download: %s", video_id, part_file.name)
         part_file.unlink()
 
     # Skip if already downloaded locally (exclude .part files), but validate audio
@@ -38,27 +41,27 @@ def _download_one(video: dict) -> None:
             capture_output=True, text=True, timeout=30,
         )
         if probe.stdout.strip():
-            print(f"  [{video_id}] Video already exists locally with audio, skipping download")
+            logger.info("[%s] Video already exists locally with audio, skipping download", video_id)
         else:
-            print(f"  [{video_id}] Cached file has no audio stream, re-downloading...")
+            logger.info("[%s] Cached file has no audio stream, re-downloading...", video_id)
             existing[0].unlink()
             download_video(video_id, run_dir)
-            print(f"  [{video_id}] Download complete")
+            logger.info("[%s] Download complete", video_id)
     else:
-        print(f"  [{video_id}] Downloading video...")
+        logger.info("[%s] Downloading video...", video_id)
         download_video(video_id, run_dir)
-        print(f"  [{video_id}] Download complete")
+        logger.info("[%s] Download complete", video_id)
 
     # Save metadata
     meta_path = run_dir / "metadata.json"
     if not meta_path.exists():
-        print(f"  [{video_id}] Fetching metadata...")
+        logger.info("[%s] Fetching metadata...", video_id)
         meta: dict = {"url": video["youtube_url"], "video_id": video_id}
         try:
             yt_meta = fetch_video_metadata(video_id)
             meta.update(yt_meta)
         except Exception as e:
-            print(f"  [{video_id}] Metadata fetch failed: {e}")
+            logger.warning("[%s] Metadata fetch failed: %s", video_id, e)
         meta_path.write_text(json.dumps(meta, indent=2))
 
     # Get title from metadata
@@ -67,37 +70,36 @@ def _download_one(video: dict) -> None:
         meta_data = json.loads(meta_path.read_text())
         title = meta_data.get("title")
 
-    print(f"  [{video_id}] Uploading to S3...")
+    logger.info("[%s] Uploading to S3...", video_id)
     upload_run(video_id, step_dirs=["00_download"])
     db.mark_video_downloaded(video["id"], video_title=title)
-    print(f"  [{video_id}] Done ({title or 'untitled'})")
+    logger.info("[%s] Done (%s)", video_id, title or "untitled")
 
 
 def download_loop(poll_interval: float = 10.0) -> None:
     """Poll for videos pending download and process them."""
     from .worker import init_sentry
     init_sentry()
-    print(f"Download worker started (polling every {poll_interval}s)")
+    logger.info("Download worker started (polling every %ss)", poll_interval)
     for key in ("DATABASE_URL", "S3_BUCKET_NAME", "PROXY_URL"):
         val = os.environ.get(key)
-        print(f"  {key}: {'set' if val else 'NOT SET'}")
+        logger.info("  %s: %s", key, "set" if val else "NOT SET")
     while True:
         try:
-            print("Polling...")
+            logger.debug("Polling...")
             videos = db.get_videos_pending_download()
             if videos:
-                print(f"Found {len(videos)} video(s) pending download")
+                logger.info("Found %d video(s) pending download", len(videos))
             for video in videos:
                 vid = video["youtube_video_id"]
-                print(f"  [{vid}] Starting download for {video.get('youtube_url', vid)}")
+                logger.info("[%s] Starting download for %s", vid, video.get("youtube_url", vid))
                 try:
                     _download_one(video)
                 except Exception:
                     sentry_sdk.capture_exception()
-                    traceback.print_exc()
+                    logger.exception("[%s] Download failed", vid)
                     db.mark_video_failed(video["id"], f"Download failed: {traceback.format_exc()}")
-                    print(f"  [{vid}] FAILED")
         except Exception:
             sentry_sdk.capture_exception()
-            traceback.print_exc()
+            logger.exception("Download worker: error in poll loop")
         time.sleep(poll_interval)

@@ -6,6 +6,7 @@ Requires DEEPGRAM_API_KEY — raises RuntimeError if missing.
 """
 
 import json
+import logging
 import os
 import re
 import subprocess
@@ -13,6 +14,8 @@ from pathlib import Path
 
 import anthropic
 import httpx
+
+logger = logging.getLogger(__name__)
 
 DEEPGRAM_API_URL = "https://api.deepgram.com/v1/listen"
 
@@ -25,10 +28,10 @@ def extract_audio(video_path: Path, output_dir: Path) -> Path:
     """
     audio_path = output_dir / "audio.mp3"
     if audio_path.exists():
-        print(f"Audio exists, skipping ({audio_path})")
+        logger.info("Audio exists, skipping (%s)", audio_path)
         return audio_path
 
-    print(f"Extracting audio from {video_path.name}...")
+    logger.info("Extracting audio from %s...", video_path.name)
     cmd = [
         "ffmpeg", "-i", str(video_path),
         "-vn", "-acodec", "libmp3lame", "-q:a", "2",
@@ -41,7 +44,7 @@ def extract_audio(video_path: Path, output_dir: Path) -> Path:
             f"ffmpeg audio extraction failed.\nstderr: {result.stderr}"
         )
 
-    print(f"Audio extracted -> {audio_path}")
+    logger.info("Audio extracted -> %s", audio_path)
     return audio_path
 
 
@@ -56,11 +59,11 @@ def run_diarization(
     """
     diarization_path = output_dir / "diarization.json"
     if diarization_path.exists():
-        print(f"Diarization exists, skipping ({diarization_path})")
+        logger.info("Diarization exists, skipping (%s)", diarization_path)
         return json.loads(diarization_path.read_text())
 
     size_mb = audio_path.stat().st_size / 1_000_000
-    print(f"Uploading {audio_path.name} to Deepgram ({size_mb:.1f} MB)...")
+    logger.info("Uploading %s to Deepgram (%.1f MB)...", audio_path.name, size_mb)
 
     audio_data = audio_path.read_bytes()
 
@@ -90,7 +93,7 @@ def run_diarization(
     # Save full response for debugging
     full_response_path = output_dir / "deepgram_response.json"
     full_response_path.write_text(json.dumps(result, indent=2))
-    print(f"Full Deepgram response saved -> {full_response_path}")
+    logger.info("Full Deepgram response saved -> %s", full_response_path)
 
     # Extract utterances
     utterances = result.get("results", {}).get("utterances", [])
@@ -105,9 +108,9 @@ def run_diarization(
 
     diarization_path.write_text(json.dumps(segments, indent=2))
     unique_speakers = set(s["speaker"] for s in segments)
-    print(
-        f"Diarization saved ({len(segments)} utterances, "
-        f"{len(unique_speakers)} speakers) -> {diarization_path}"
+    logger.info(
+        "Diarization saved (%d utterances, %d speakers) -> %s",
+        len(segments), len(unique_speakers), diarization_path,
     )
 
     return segments
@@ -123,7 +126,7 @@ def map_speaker_names(
     """
     mapping_path = output_dir / "speaker_map.json"
     if mapping_path.exists():
-        print(f"Speaker mapping exists, skipping ({mapping_path})")
+        logger.info("Speaker mapping exists, skipping (%s)", mapping_path)
         raw = json.loads(mapping_path.read_text())
         return {int(k): v for k, v in raw.items()}
 
@@ -177,16 +180,16 @@ Return ONLY a valid JSON object, no other text. Example:
     if json_match:
         raw_mapping = json.loads(json_match.group())
     else:
-        print(
-            f"WARNING: Could not parse speaker mapping from Haiku response:\n"
-            f"{response_text}"
+        logger.warning(
+            "Could not parse speaker mapping from Haiku response:\n%s",
+            response_text,
         )
         raw_mapping = {str(s): f"Speaker {s}" for s in speaker_ids}
 
     mapping_path.write_text(json.dumps(raw_mapping, indent=2))
 
     mapping = {int(k): v for k, v in raw_mapping.items()}
-    print(f"Speaker mapping: {mapping}")
+    logger.info("Speaker mapping: %s", mapping)
     return mapping
 
 
@@ -268,15 +271,15 @@ def transcribe_with_deepgram(
     # Check for existing output (skip if not forcing)
     transcript_path = output_dir / "transcript.txt"
     if not force and transcript_path.exists():
-        print(f"Transcript exists, skipping ({transcript_path})")
+        logger.info("Transcript exists, skipping (%s)", transcript_path)
         return
 
     # Step 1: Extract audio from video
-    print("Extracting audio from video...")
+    logger.info("Extracting audio from video...")
     audio_path = extract_audio(video_path, output_dir)
 
     # Step 2: Run Deepgram diarization
-    print("Running Deepgram diarization...")
+    logger.info("Running Deepgram diarization...")
     segments = run_diarization(audio_path, api_key, output_dir)
 
     # Step 3: Check speaker count
@@ -286,10 +289,10 @@ def transcribe_with_deepgram(
     # Step 4: Map speaker names (only if multi-speaker)
     speaker_names: dict[int, str] | None = None
     if is_multi_speaker:
-        print(f"Found {len(unique_speakers)} speakers, mapping names...")
+        logger.info("Found %d speakers, mapping names...", len(unique_speakers))
         speaker_names = map_speaker_names(segments, metadata, output_dir)
 
     # Step 5: Format and save transcript
     transcript_text = format_transcript(segments, speaker_names)
     transcript_path.write_text(transcript_text)
-    print(f"Transcript saved ({len(transcript_text)} chars) -> {transcript_path}")
+    logger.info("Transcript saved (%d chars) -> %s", len(transcript_text), transcript_path)

@@ -1,7 +1,10 @@
 """Generate a Key Takeaways section and prepend it to an essay."""
 
+import logging
 import re
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def summarize_essay(essay_path: Path, force: bool = False) -> None:
@@ -15,13 +18,13 @@ def summarize_essay(essay_path: Path, force: bool = False) -> None:
     text = essay_path.read_text()
 
     if re.search(r"^#{1,3}\s+Key Takeaways", text, re.MULTILINE) and not force:
-        print(f"Key Takeaways already present, skipping ({essay_path})")
+        logger.info("Key Takeaways already present, skipping (%s)", essay_path)
         return
 
     # Strip any existing Key Takeaways sections if forcing
     text = _strip_takeaways(text)
 
-    print("Generating Key Takeaways...")
+    logger.info("Generating Key Takeaways...")
     client = anthropic.Anthropic()
 
     tool = {
@@ -70,7 +73,7 @@ def summarize_essay(essay_path: Path, force: bool = False) -> None:
         updated = f"## Key Takeaways\n\n{bullets}\n\n---\n\n## Transcript\n\n" + text
 
     essay_path.write_text(updated)
-    print(f"Key Takeaways added -> {essay_path}")
+    logger.info("Key Takeaways added -> %s", essay_path)
 
 
 def _strip_takeaways(text: str) -> str:

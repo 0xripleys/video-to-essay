@@ -1,6 +1,7 @@
 """Process worker: runs the pipeline (transcript -> essay -> frames -> images) on downloaded videos."""
 
 import json
+import logging
 import os
 import re
 import traceback
@@ -10,6 +11,8 @@ from pathlib import Path
 import httpx
 
 import sentry_sdk
+
+logger = logging.getLogger(__name__)
 
 from . import db
 from .analytics import capture as track
@@ -131,17 +134,17 @@ def _process_one(video: dict) -> None:
         "youtube_video_id": youtube_video_id,
         "video_title": video.get("video_title", "untitled"),
     })
-    print(f"Process: completed {youtube_video_id} ({video.get('video_title', 'untitled')})")
+    logger.info("Process: completed %s (%s)", youtube_video_id, video.get("video_title", "untitled"))
 
 
 def process_loop(poll_interval: float = 10.0) -> None:
     """Poll for videos pending processing and run the pipeline."""
     from .worker import init_sentry
     init_sentry()
-    print(f"Process worker started (polling every {poll_interval}s)")
+    logger.info("Process worker started (polling every %ss)", poll_interval)
     for key in ("DATABASE_URL", "ANTHROPIC_API_KEY", "DEEPGRAM_API_KEY", "S3_BUCKET_NAME"):
         val = os.environ.get(key)
-        print(f"  {key}: {'set' if val else 'NOT SET'}")
+        logger.info("  %s: %s", key, "set" if val else "NOT SET")
     while True:
         try:
             videos = db.get_videos_pending_processing()
@@ -153,21 +156,19 @@ def process_loop(poll_interval: float = 10.0) -> None:
                     except TRANSIENT_ERRORS:
                         if attempt < MAX_RETRIES:
                             wait = 2 ** attempt
-                            print(f"Process: transient error on {video['youtube_video_id']} (attempt {attempt}/{MAX_RETRIES}), retrying in {wait}s")
-                            traceback.print_exc()
+                            logger.warning("Process: transient error on %s (attempt %d/%d), retrying in %ds", video["youtube_video_id"], attempt, MAX_RETRIES, wait)
+                            logger.debug("Traceback:", exc_info=True)
                             time.sleep(wait)
                         else:
                             sentry_sdk.capture_exception()
-                            traceback.print_exc()
+                            logger.exception("Process: failed %s after %d attempts", video["youtube_video_id"], MAX_RETRIES)
                             db.mark_video_failed(video["id"], f"Processing failed after {MAX_RETRIES} attempts: {traceback.format_exc()}")
-                            print(f"Process: failed {video['youtube_video_id']}")
                     except Exception:
                         sentry_sdk.capture_exception()
-                        traceback.print_exc()
+                        logger.exception("Process: failed %s", video["youtube_video_id"])
                         db.mark_video_failed(video["id"], f"Processing failed: {traceback.format_exc()}")
-                        print(f"Process: failed {video['youtube_video_id']}")
                         break
         except Exception:
             sentry_sdk.capture_exception()
-            traceback.print_exc()
+            logger.exception("Process worker: error in poll loop")
         time.sleep(poll_interval)

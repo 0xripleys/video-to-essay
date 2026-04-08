@@ -1,11 +1,14 @@
 """S3 storage helpers: upload/download run artifacts."""
 
+import logging
 import mimetypes
 import os
 from functools import lru_cache
 from pathlib import Path
 
 import boto3
+
+logger = logging.getLogger(__name__)
 
 RUNS_DIR = Path("runs")
 
@@ -62,7 +65,7 @@ def upload_run(video_id: str, step_dirs: list[str] | None = None) -> None:
                 key,
                 ExtraArgs={"ContentType": _content_type(file_path)},
             )
-    print(f"S3: uploaded runs/{video_id}/ ({step_dirs or 'all'})")
+    logger.info("S3: uploaded runs/%s/ (%s)", video_id, step_dirs or "all")
 
 
 def download_file(video_id: str, relative_path: str) -> bytes:
@@ -95,4 +98,4 @@ def download_run(video_id: str, step_dirs: list[str] | None = None) -> None:
             local_path.parent.mkdir(parents=True, exist_ok=True)
             client.download_file(bucket, key, str(local_path))
 
-    print(f"S3: downloaded runs/{video_id}/ ({step_dirs or 'all'})")
+    logger.info("S3: downloaded runs/%s/ (%s)", video_id, step_dirs or "all")

@@ -12,6 +12,7 @@ Usage:
 """
 
 import json
+import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,7 +45,12 @@ app = typer.Typer(help="Convert YouTube videos into illustrated essays.")
 
 @app.callback()
 def _startup() -> None:
-    """Initialize Sentry before any subcommand runs."""
+    """Initialize logging and Sentry before any subcommand runs."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
     sentry_dsn = os.environ.get("SENTRY_DSN")
     if sentry_dsn:
         sentry_sdk.init(

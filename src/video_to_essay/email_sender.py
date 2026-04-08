@@ -1,11 +1,14 @@
 """Send completed essays via AgentMail."""
 
+import logging
 import os
 import re
 import textwrap
 
 import markdown
 from agentmail import AgentMail
+
+logger = logging.getLogger(__name__)
 
 
 def _get_client() -> AgentMail:
@@ -89,4 +92,4 @@ def send_essay(
         html=html,
         text=plaintext,
     )
-    print(f"Essay emailed to {to_email}")
+    logger.info("Essay emailed to %s", to_email)
