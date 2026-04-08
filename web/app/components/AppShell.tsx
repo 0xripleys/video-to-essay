@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState } from "react";
+import { useRouter, usePathname } from "next/navigation";
 
 type AuthState = "loading" | "authenticated" | "unauthenticated";
 type View = "feed" | "channels";
@@ -21,6 +22,13 @@ export function useView() {
 
 function Sidebar() {
   const { view, setView } = useView();
+  const router = useRouter();
+  const pathname = usePathname();
+
+  const navigate = (v: View) => {
+    setView(v);
+    if (pathname !== "/") router.push("/");
+  };
 
   return (
     <aside className="hidden md:flex w-52 flex-shrink-0 flex-col border-r border-stone-200 bg-stone-50 px-3 pb-6 pt-4">
@@ -30,7 +38,7 @@ function Sidebar() {
 
       <nav className="flex flex-1 flex-col gap-0.5">
         <button
-          onClick={() => setView("feed")}
+          onClick={() => navigate("feed")}
           className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] transition-colors ${
             view === "feed"
               ? "bg-white font-semibold text-stone-900 shadow-sm ring-1 ring-stone-200"
@@ -52,7 +60,7 @@ function Sidebar() {
         </button>
 
         <button
-          onClick={() => setView("channels")}
+          onClick={() => navigate("channels")}
           className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] transition-colors ${
             view === "channels"
               ? "bg-white font-semibold text-stone-900 shadow-sm ring-1 ring-stone-200"
@@ -89,6 +97,13 @@ function Sidebar() {
 
 function MobileHeader() {
   const { view, setView } = useView();
+  const router = useRouter();
+  const pathname = usePathname();
+
+  const navigate = (v: View) => {
+    setView(v);
+    if (pathname !== "/") router.push("/");
+  };
 
   return (
     <header className="flex md:hidden items-center justify-between border-b border-stone-200 bg-stone-50 px-4 py-3">
@@ -97,7 +112,7 @@ function MobileHeader() {
       </a>
       <nav className="flex items-center gap-1">
         <button
-          onClick={() => setView("feed")}
+          onClick={() => navigate("feed")}
           className={`rounded-lg px-3 py-1.5 text-[13px] transition-colors ${
             view === "feed"
               ? "bg-white font-semibold text-stone-900 shadow-sm ring-1 ring-stone-200"
@@ -107,7 +122,7 @@ function MobileHeader() {
           Feed
         </button>
         <button
-          onClick={() => setView("channels")}
+          onClick={() => navigate("channels")}
           className={`rounded-lg px-3 py-1.5 text-[13px] transition-colors ${
             view === "channels"
               ? "bg-white font-semibold text-stone-900 shadow-sm ring-1 ring-stone-200"
