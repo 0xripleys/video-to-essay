@@ -198,11 +198,14 @@ export async function createSubscription(
   playlistIds: string[] | null = null,
 ): Promise<string> {
   const id = uid();
-  await pool.query(
-    "INSERT INTO subscriptions (id, user_id, channel_id, playlist_ids, poll_interval_hours, active, created_at) VALUES ($1, $2, $3, $4, 1, TRUE, $5)",
+  const { rows } = await pool.query(
+    `INSERT INTO subscriptions (id, user_id, channel_id, playlist_ids, poll_interval_hours, active, created_at)
+     VALUES ($1, $2, $3, $4, 1, TRUE, $5)
+     ON CONFLICT (user_id, channel_id) DO UPDATE SET active = TRUE, playlist_ids = EXCLUDED.playlist_ids
+     RETURNING id`,
     [id, userId, channelId, playlistIds, now()],
   );
-  return id;
+  return rows[0].id;
 }
 
 export async function listUserSubscriptions(
