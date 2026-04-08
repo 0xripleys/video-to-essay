@@ -42,21 +42,9 @@ from .transcriber import (
 app = typer.Typer(help="Convert YouTube videos into illustrated essays.")
 
 
-def _load_env() -> None:
-    """Load .env file from project root if it exists."""
-    env_path = Path(__file__).resolve().parent.parent.parent / ".env"
-    if env_path.exists():
-        for line in env_path.read_text().splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                key, _, value = line.partition("=")
-                os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
-
-
 @app.callback()
 def _startup() -> None:
-    """Load environment variables and initialize Sentry before any subcommand runs."""
-    _load_env()
+    """Initialize Sentry before any subcommand runs."""
     sentry_dsn = os.environ.get("SENTRY_DSN")
     if sentry_dsn:
         sentry_sdk.init(

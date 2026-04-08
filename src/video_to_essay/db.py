@@ -6,9 +6,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 import psycopg
-from dotenv import load_dotenv
-
-load_dotenv()
 from psycopg.rows import dict_row
 
 SCHEMA = """
