@@ -15,6 +15,17 @@ def _get_client() -> AgentMail:
     return AgentMail(api_key=api_key)
 
 
+def _insert_scrivi_link(essay_md: str, scrivi_link: str) -> str:
+    """Insert the Scrivi link after Key Takeaways bullets, before the ---."""
+    if "## Key Takeaways" in essay_md:
+        return re.sub(r"(\n---\n)", f"\n{scrivi_link}\n\\1", essay_md, count=1)
+    # No Key Takeaways section — insert after H1
+    h1_match = re.match(r"(# .+\n)", essay_md)
+    if h1_match:
+        return essay_md[:h1_match.end()] + f"\n{scrivi_link}\n\n" + essay_md[h1_match.end():]
+    return f"{scrivi_link}\n\n" + essay_md
+
+
 def _essay_to_html(essay_md: str) -> str:
     """Convert markdown essay to HTML email body.
 
@@ -40,12 +51,17 @@ def send_essay(
     essay_md: str,
     inbox_id: str | None = None,
     channel_name: str | None = None,
+    video_id: str | None = None,
 ) -> None:
     """Send the completed essay to the user's email."""
     client = _get_client()
     inbox = inbox_id or os.environ.get("AGENTMAIL_INBOX_ID")
     if not inbox:
         raise RuntimeError("AGENTMAIL_INBOX_ID environment variable is required")
+
+    if video_id:
+        scrivi_link = f"[Read on Scrivi](https://scrivi.ink/reader?id={video_id})"
+        essay_md = _insert_scrivi_link(essay_md, scrivi_link)
 
     html = _essay_to_html(essay_md)
 

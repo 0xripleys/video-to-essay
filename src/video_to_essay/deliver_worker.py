@@ -41,7 +41,7 @@ def _deliver() -> None:
             title = d.get("video_title") or "Untitled Video"
             channel_name = d.get("channel_name")
             logger.info("delivery=%s: sending to %s (%s)", did, email, title)
-            send_essay(email, title, essay, channel_name=channel_name)
+            send_essay(email, title, essay, channel_name=channel_name, video_id=d["video_id"])
             db.mark_delivery_sent(did)
             track("email_delivered", {
                 "youtube_video_id": vid,
