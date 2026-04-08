@@ -26,6 +26,22 @@ def _insert_scrivi_link(essay_md: str, scrivi_link: str) -> str:
     return f"{scrivi_link}\n\n" + essay_md
 
 
+def _essay_to_plaintext(essay_md: str) -> str:
+    """Convert markdown essay to plaintext: strip base64 images, wrap lines."""
+    plaintext = re.sub(
+        r"!\[([^\]]*)\]\(data:image/[^)]+\)",
+        r"[Image: \1]",
+        essay_md,
+    )
+    wrapped_lines: list[str] = []
+    for line in plaintext.splitlines():
+        if not line.strip() or line.startswith("#") or line.startswith(">"):
+            wrapped_lines.append(line)
+        else:
+            wrapped_lines.append(textwrap.fill(line, width=80))
+    return "\n".join(wrapped_lines)
+
+
 def _essay_to_html(essay_md: str) -> str:
     """Convert markdown essay to HTML email body.
 
@@ -64,22 +80,7 @@ def send_essay(
         essay_md = _insert_scrivi_link(essay_md, scrivi_link)
 
     html = _essay_to_html(essay_md)
-
-    # Strip base64 images from plaintext (they can't render there anyway)
-    plaintext = re.sub(
-        r"!\[([^\]]*)\]\(data:image/[^)]+\)",
-        r"[Image: \1]",
-        essay_md,
-    )
-
-    # Wrap long lines at 80 chars, preserving blank lines and headings
-    wrapped_lines: list[str] = []
-    for line in plaintext.splitlines():
-        if not line.strip() or line.startswith("#") or line.startswith(">"):
-            wrapped_lines.append(line)
-        else:
-            wrapped_lines.append(textwrap.fill(line, width=80))
-    plaintext = "\n".join(wrapped_lines)
+    plaintext = _essay_to_plaintext(essay_md)
 
     client.inboxes.messages.send(
         inbox,

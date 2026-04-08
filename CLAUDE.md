@@ -20,6 +20,11 @@ video-to-essay score <video_id>            # LLM-as-judge scoring
 
 Common flags: `--cookies cookies.txt` (cloud IPs), `--force`, `--no-embed`, `--output-dir / -o`.
 
+```bash
+video-to-essay serve                       # Start all 4 workers in-process
+video-to-essay worker discover             # Run a single worker (discover/download/process/deliver)
+```
+
 ### Web app (Next.js)
 
 ```bash
@@ -39,9 +44,14 @@ launchctl load ~/Library/LaunchAgents/com.video-to-essay.*.plist
 
 Logs are written to `logs/` (`discover.log`, `download.log`, `process.log`, `deliver.log`).
 
-### No test suite
+### Tests
 
-Verify changes manually by running against a real YouTube URL.
+```bash
+uv run pytest tests/ -x      # Run all pure tests (~1s)
+uv run pytest tests/ -x -v   # Verbose output
+```
+
+For integration testing, verify changes manually by running against a real YouTube URL.
 
 ## Architecture
 
@@ -55,7 +65,7 @@ There are two systems that share a Supabase Postgres database:
 ```
 discover (60s) → download (10s) → process (10s) → deliver (15s)
    │                  │                │                │
-   │ RSS feed poll    │ yt-dlp         │ transcript →   │ create subscription
+   │ YouTube API poll │ yt-dlp         │ transcript →   │ create subscription
    │ → new video rows │ → video file   │ sponsors →     │ delivery rows
    │                  │ → metadata     │ essay →        │ → send via AgentMail
    │                  │                │ frames →       │
@@ -75,7 +85,7 @@ Each step is idempotent (skips if output exists unless `--force`). Each step rea
 - **`main.py`** — Typer CLI entry point, step orchestration
 - **`db.py`** — Postgres schema, all DB queries (Python side)
 - **`worker.py`** — Starts all 4 worker threads
-- **`discover_worker.py`** — Polls YouTube RSS for new videos on subscribed channels
+- **`discover_worker.py`** — Polls YouTube Data API for new videos on subscribed channels
 - **`download_worker.py`** — Downloads videos via yt-dlp
 - **`process_worker.py`** — Runs full pipeline (transcript → essay → frames → images)
 - **`deliver_worker.py`** — Creates subscription delivery rows, sends emails via AgentMail
@@ -98,7 +108,7 @@ Each step is idempotent (skips if output exists unless `--force`). Each step rea
 
 - **Database** — Supabase Postgres, shared between web app (TypeScript `pg`) and workers (Python `psycopg`). Both sides have their own query functions.
 - **Auth** — WorkOS. Dev mode: if `WORKOS_API_KEY` is unset, auto-creates a `dev@localhost` user.
-- **Claude models** — Sonnet (`claude-sonnet-4-5-20250929`) in `transcriber.py`, `place_images.py`, `scorer.py`. Haiku (`claude-haiku-4-5-20251001`) in `extract_frames.py`, `filter_sponsors.py`, `diarize.py`, `transcriber.py` (style profiles). Update all six files if changing models.
+- **Claude models** — Sonnet (`claude-sonnet-4-5-20250929`) in `transcriber.py`, `place_images.py`, `scorer.py`, `summarize.py`. Haiku (`claude-haiku-4-5-20251001`) in `extract_frames.py`, `filter_sponsors.py`, `diarize.py`, `transcriber.py` (style profiles). Update all seven files if changing models.
 - **Deepgram** — `DEEPGRAM_API_KEY` required for transcription. Nova-3 with diarization.
 - **YouTube** — yt-dlp with `--remote-components ejs:github` for JS challenges. Cloud IPs need `--cookies`. Requires `ffmpeg` and `deno` on PATH.
 - **Email** — AgentMail API. Essays sent as HTML (inline-styled, sans-serif, 700px max-width) with plaintext fallback (80-char wrapped). Subject: `{Channel Name}: {Video Title}`.

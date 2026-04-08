@@ -22,6 +22,12 @@ dependencies = [
 [project.scripts]
 video-to-essay = "video_to_essay.main:app"
 
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
