@@ -51,6 +51,7 @@ export default function AddChannelModal({
   const [loadingPlaylists, setLoadingPlaylists] = useState(false);
   const [selectedPlaylistIds, setSelectedPlaylistIds] = useState<Set<string>>(new Set());
   const [allVideos, setAllVideos] = useState(true);
+  const [excludeLivestreams, setExcludeLivestreams] = useState(false);
 
   // Pre-selected playlist from URL
   const [preselectedPlaylistId, setPreselectedPlaylistId] = useState<string | null>(null);
@@ -238,12 +239,14 @@ export default function AddChannelModal({
     try {
       const playlistIds = allVideos ? null : Array.from(selectedPlaylistIds);
 
+      const excludeLive = allVideos ? false : excludeLivestreams;
+
       // If editing an existing subscription, PATCH it
       if (existingSubId) {
         const res = await api(`/api/subscriptions/${existingSubId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ playlist_ids: playlistIds }),
+          body: JSON.stringify({ playlist_ids: playlistIds, exclude_livestreams: excludeLive }),
         });
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
@@ -261,6 +264,7 @@ export default function AddChannelModal({
         body: JSON.stringify({
           url: `https://www.youtube.com/channel/${selected.channelId}`,
           playlist_ids: playlistIds,
+          exclude_livestreams: excludeLive,
         }),
       });
       if (res.status === 409) {
@@ -387,6 +391,23 @@ export default function AddChannelModal({
               />
             )}
             <div className={`${playlists.length > 5 ? "mt-2" : "mt-4"} max-h-64 space-y-1 overflow-y-auto`}>
+              <label
+                className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 hover:bg-stone-50"
+              >
+                <input
+                  type="checkbox"
+                  checked={!excludeLivestreams}
+                  onChange={() => setExcludeLivestreams(!excludeLivestreams)}
+                  className="flex-shrink-0 accent-stone-900"
+                />
+                <div className="flex h-9 w-16 flex-shrink-0 items-center justify-center rounded bg-red-50">
+                  <span className="text-xs text-red-500">LIVE</span>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm text-stone-700">Live Streams</p>
+                  <p className="text-xs text-stone-400">Include live stream recordings</p>
+                </div>
+              </label>
               {playlists.length === 0 && (
                 <p className="py-2 text-xs text-stone-400">No playlists found on this channel</p>
               )}

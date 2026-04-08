@@ -12,6 +12,7 @@ interface Channel {
   thumbnail_url: string | null;
   description: string | null;
   playlist_ids: string[] | null;
+  exclude_livestreams: boolean;
   video_count: number;
   active: boolean;
   created_at: string;
@@ -122,6 +123,7 @@ function EditPlaylistsModal({
     new Set(channel.playlist_ids ?? []),
   );
   const [allVideos, setAllVideos] = useState(!channel.playlist_ids);
+  const [excludeLivestreams, setExcludeLivestreams] = useState(channel.exclude_livestreams ?? false);
   const [filter, setFilter] = useState("");
 
   useEffect(() => {
@@ -149,6 +151,7 @@ function EditPlaylistsModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           playlist_ids: allVideos ? null : Array.from(selectedIds),
+          exclude_livestreams: allVideos ? false : excludeLivestreams,
         }),
       });
       if (res.ok) {
@@ -213,6 +216,23 @@ function EditPlaylistsModal({
               />
             )}
             <div className="mt-2 max-h-48 space-y-1 overflow-y-auto">
+              <label
+                className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 hover:bg-stone-50"
+              >
+                <input
+                  type="checkbox"
+                  checked={!excludeLivestreams}
+                  onChange={() => setExcludeLivestreams(!excludeLivestreams)}
+                  className="flex-shrink-0 accent-stone-900"
+                />
+                <div className="flex h-9 w-16 flex-shrink-0 items-center justify-center rounded bg-red-50">
+                  <span className="text-xs text-red-500">LIVE</span>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm text-stone-700">Live Streams</p>
+                  <p className="text-xs text-stone-400">Include live stream recordings</p>
+                </div>
+              </label>
               {loading && (
                 <p className="py-2 text-xs text-stone-400">Loading playlists...</p>
               )}

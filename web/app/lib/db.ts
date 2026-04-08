@@ -196,14 +196,15 @@ export async function createSubscription(
   userId: string,
   channelId: string,
   playlistIds: string[] | null = null,
+  excludeLivestreams: boolean = false,
 ): Promise<string> {
   const id = uid();
   const { rows } = await pool.query(
-    `INSERT INTO subscriptions (id, user_id, channel_id, playlist_ids, poll_interval_hours, active, created_at)
-     VALUES ($1, $2, $3, $4, 1, TRUE, $5)
-     ON CONFLICT (user_id, channel_id) DO UPDATE SET active = TRUE, playlist_ids = EXCLUDED.playlist_ids
+    `INSERT INTO subscriptions (id, user_id, channel_id, playlist_ids, poll_interval_hours, active, exclude_livestreams, created_at)
+     VALUES ($1, $2, $3, $4, 1, TRUE, $6, $5)
+     ON CONFLICT (user_id, channel_id) DO UPDATE SET active = TRUE, playlist_ids = EXCLUDED.playlist_ids, exclude_livestreams = EXCLUDED.exclude_livestreams
      RETURNING id`,
-    [id, userId, channelId, playlistIds, now()],
+    [id, userId, channelId, playlistIds, now(), excludeLivestreams],
   );
   return rows[0].id;
 }
@@ -270,5 +271,15 @@ export async function updateSubscriptionPlaylists(
   await pool.query(
     "UPDATE subscriptions SET playlist_ids = $1 WHERE id = $2",
     [playlistIds, subId],
+  );
+}
+
+export async function updateSubscriptionExcludeLivestreams(
+  subId: string,
+  excludeLivestreams: boolean,
+): Promise<void> {
+  await pool.query(
+    "UPDATE subscriptions SET exclude_livestreams = $1 WHERE id = $2",
+    [excludeLivestreams, subId],
   );
 }

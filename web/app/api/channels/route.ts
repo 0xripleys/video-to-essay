@@ -32,6 +32,7 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
   const url: string = body.url;
   const playlistIds: string[] | undefined = body.playlist_ids;
+  const excludeLivestreams: boolean = body.exclude_livestreams ?? false;
 
   if (!url) {
     return NextResponse.json({ detail: "URL is required" }, { status: 422 });
@@ -60,6 +61,7 @@ export async function POST(request: NextRequest) {
       user.id,
       channel.id,
       playlistIds ?? null,
+      excludeLivestreams,
     );
     getPostHogClient()?.capture({
       distinctId: user.id,

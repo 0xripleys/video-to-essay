@@ -73,27 +73,53 @@ def _check_playlist_membership(
     return matched
 
 
-def _filter_active_livestreams(video_ids: list[str], api_key: str) -> set[str]:
-    """Return the set of video IDs that are upcoming or currently live (not yet downloadable)."""
-    active = set()
-    # videos.list accepts up to 50 IDs per request
+def _parse_iso8601_duration(duration: str) -> int:
+    """Parse an ISO 8601 duration (e.g. PT1H2M30S, PT45S) and return total seconds."""
+    import re
+    m = re.match(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", duration)
+    if not m:
+        return 0
+    hours = int(m.group(1) or 0)
+    minutes = int(m.group(2) or 0)
+    seconds = int(m.group(3) or 0)
+    return hours * 3600 + minutes * 60 + seconds
+
+
+class VideoClassification:
+    __slots__ = ("is_active_stream", "is_livestream", "is_short")
+
+    def __init__(self, is_active_stream: bool, is_livestream: bool, is_short: bool):
+        self.is_active_stream = is_active_stream
+        self.is_livestream = is_livestream
+        self.is_short = is_short
+
+
+def _classify_videos(video_ids: list[str], api_key: str) -> dict[str, VideoClassification]:
+    """Classify videos as active streams, livestreams, or shorts using the YouTube Data API."""
+    result: dict[str, VideoClassification] = {}
     for i in range(0, len(video_ids), 50):
         batch = video_ids[i : i + 50]
         resp = httpx.get(
             VIDEOS_URL,
             params={
                 "id": ",".join(batch),
-                "part": "liveStreamingDetails",
+                "part": "liveStreamingDetails,contentDetails",
                 "key": api_key,
             },
             timeout=30,
         )
         resp.raise_for_status()
         for item in resp.json().get("items", []):
-            details = item.get("liveStreamingDetails")
-            if details and "actualEndTime" not in details:
-                active.add(item["id"])
-    return active
+            vid = item["id"]
+            live_details = item.get("liveStreamingDetails")
+            duration_str = item.get("contentDetails", {}).get("duration", "")
+            duration_secs = _parse_iso8601_duration(duration_str)
+            result[vid] = VideoClassification(
+                is_active_stream=bool(live_details and "actualEndTime" not in live_details),
+                is_livestream=bool(live_details),
+                is_short=duration_secs <= 60 and duration_secs > 0,
+            )
+    return result
 
 
 def _check_channel(channel: dict, api_key: str) -> int:
@@ -163,19 +189,30 @@ def _check_channel(channel: dict, api_key: str) -> int:
             break
         page_token = data["nextPageToken"]
 
-    # Filter out upcoming/active livestreams
+    # Classify candidates (shorts, livestreams, active streams)
     if candidates:
-        active_streams = _filter_active_livestreams(
+        classifications = _classify_videos(
             [c["video_id"] for c in candidates], api_key
         )
-        if active_streams:
-            print(f"Discover: skipping {len(active_streams)} active/upcoming livestream(s)")
     else:
-        active_streams = set()
+        classifications = {}
+
+    # Check if all subscriptions for this channel exclude livestreams
+    subs = db.get_channel_subscriptions(channel["id"])
+    all_exclude_livestreams = subs and all(s.get("exclude_livestreams", False) for s in subs)
 
     new_count = 0
+    skipped_shorts = 0
+    skipped_livestreams = 0
     for c in candidates:
-        if c["video_id"] in active_streams:
+        info = classifications.get(c["video_id"])
+        if info and info.is_active_stream:
+            continue
+        if info and info.is_short:
+            skipped_shorts += 1
+            continue
+        if info and info.is_livestream and all_exclude_livestreams:
+            skipped_livestreams += 1
             continue
         video_url = f"https://www.youtube.com/watch?v={c['video_id']}"
         db.create_video(
@@ -184,8 +221,14 @@ def _check_channel(channel: dict, api_key: str) -> int:
             channel_id=channel["id"],
             video_title=c["title"],
             matched_playlist_ids=c["membership"],
+            is_livestream=bool(info and info.is_livestream),
         )
         new_count += 1
+
+    if skipped_shorts:
+        print(f"Discover: skipped {skipped_shorts} short(s)")
+    if skipped_livestreams:
+        print(f"Discover: skipped {skipped_livestreams} livestream(s) (all subscribers exclude)")
 
     db.update_channel_checked(channel["id"])
     return new_count

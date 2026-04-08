@@ -92,6 +92,8 @@ MIGRATIONS = [
     "ALTER TABLE channels ADD COLUMN IF NOT EXISTS description TEXT",
     "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS playlist_ids TEXT[]",
     "ALTER TABLE videos ADD COLUMN IF NOT EXISTS matched_playlist_ids TEXT[]",
+    "ALTER TABLE videos ADD COLUMN IF NOT EXISTS is_livestream BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS exclude_livestreams BOOLEAN NOT NULL DEFAULT FALSE",
 ]
 
 
@@ -289,12 +291,13 @@ def create_video(
     channel_id: str | None = None,
     video_title: str | None = None,
     matched_playlist_ids: list[str] | None = None,
+    is_livestream: bool = False,
 ) -> str:
     video_id = _uid()
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO videos (id, youtube_video_id, youtube_url, video_title, channel_id, matched_playlist_ids, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-            (video_id, youtube_video_id, youtube_url, video_title, channel_id, matched_playlist_ids, _now()),
+            "INSERT INTO videos (id, youtube_video_id, youtube_url, video_title, channel_id, matched_playlist_ids, is_livestream, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (video_id, youtube_video_id, youtube_url, video_title, channel_id, matched_playlist_ids, is_livestream, _now()),
         )
         conn.commit()
     return video_id
@@ -439,6 +442,7 @@ def create_subscription_deliveries() -> int:
             WHERE v.processed_at IS NOT NULL
               AND d.id IS NULL
               AND (s.playlist_ids IS NULL OR v.matched_playlist_ids && s.playlist_ids)
+              AND (s.exclude_livestreams = FALSE OR v.is_livestream = FALSE)
             ON CONFLICT DO NOTHING
             """
         )

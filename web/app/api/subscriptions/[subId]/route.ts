@@ -5,6 +5,7 @@ import {
   deactivateSubscription,
   updateSubscriptionInterval,
   updateSubscriptionPlaylists,
+  updateSubscriptionExcludeLivestreams,
 } from "@/app/lib/db";
 import { getPostHogClient } from "@/app/lib/posthog";
 
@@ -63,6 +64,9 @@ export async function PATCH(
   }
   if ("playlist_ids" in body) {
     await updateSubscriptionPlaylists(subId, body.playlist_ids ?? null);
+  }
+  if ("exclude_livestreams" in body) {
+    await updateSubscriptionExcludeLivestreams(subId, body.exclude_livestreams ?? false);
   }
   return NextResponse.json({ status: "updated" });
 }
