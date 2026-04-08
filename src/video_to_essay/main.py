@@ -31,6 +31,7 @@ from .place_images import (
     place_images_in_essay,
 )
 from .scorer import DIMENSION_NAMES, score_essay, score_one  # noqa: F401
+from .summarize import summarize_essay
 from .transcriber import (
     download_video,
     extract_video_id,
@@ -427,6 +428,10 @@ def run(
         print("\nPipeline stopped at essay step.")
         raise typer.Exit(1)
 
+    # Sub-step: generate Key Takeaways
+    essay_path = _step_dir(run_dir, "essay") / "essay.md"
+    summarize_essay(essay_path, force=force)
+
     print(f"\n{'=' * 60}")
     print("Step 4/6: Extract frames")
     print("=" * 60)
@@ -527,6 +532,8 @@ def essay(
     run_dir = _run_dir(video_id, output_dir)
     if not _step_essay(video_id, run_dir, force):
         raise typer.Exit(1)
+    essay_path = _step_dir(run_dir, "essay") / "essay.md"
+    summarize_essay(essay_path, force=force)
 
 
 @app.command()

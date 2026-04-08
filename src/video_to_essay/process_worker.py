@@ -20,6 +20,7 @@ from .place_images import (
     place_images_in_essay,
 )
 from .s3 import download_run, get_public_url, upload_run
+from .summarize import summarize_essay
 from .transcriber import transcript_to_essay
 
 RUNS_DIR = Path("runs")
@@ -74,7 +75,9 @@ def _process_one(video: dict) -> None:
     # Step 3: Essay
     essay_dir = _step_dir(run_dir, "essay")
     essay_text = transcript_to_essay(cleaned, video_id=youtube_video_id)
-    (essay_dir / "essay.md").write_text(essay_text)
+    essay_path = essay_dir / "essay.md"
+    essay_path.write_text(essay_text)
+    summarize_essay(essay_path)
 
     # Step 4: Extract frames
     frames_dir = _step_dir(run_dir, "frames")
