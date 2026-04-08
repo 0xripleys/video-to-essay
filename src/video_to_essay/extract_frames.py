@@ -17,10 +17,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-import anthropic
 import cv2
 import imagehash
 from PIL import Image
+
+from . import llm_client
 
 
 def parse_transcript(transcript: str) -> list[tuple[int, str]]:
@@ -168,8 +169,6 @@ def classify_frames(
     transcript_entries: list[tuple[int, str]] | None = None,
 ) -> list[dict[str, str | int]]:
     """Send frames to Claude Haiku for classification and relevance scoring."""
-    client = anthropic.Anthropic()
-
     results: list[dict[str, str | int]] = []
 
     for frame_path in frames:
@@ -189,47 +188,29 @@ def classify_frames(
                 f'"{context}"'
             )
 
-        msg = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=256,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": "image/jpeg",
-                                "data": b64,
-                            },
-                        },
-                        {
-                            "type": "text",
-                            "text": (
-                                "Classify this video frame. Respond with ONLY valid JSON, no other text.\n\n"
-                                "{\n"
-                                '  "category": one of "slide", "chart", "code", "diagram", "key_moment", "talking_head", "transition", "advertisement", "other",\n'
-                                '  "value": 1-5 (5 = essential visual information for an essay about this video),\n'
-                                '  "description": brief description of what the frame shows and how it relates to what is being discussed\n'
-                                "}"
-                                f"{context_block}"
-                            ),
-                        },
-                    ],
-                }
-            ],
-        )
-
-        raw = msg.content[0].text.strip()
-        # Handle markdown code blocks
-        if raw.startswith("```"):
-            raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-
         try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError:
-            parsed = {"category": "unknown", "value": 0, "description": raw}
+            parsed = llm_client.vision_classify(
+                (
+                    "Classify this video frame. Respond with ONLY valid JSON, no "
+                    "other text.\n\n"
+                    "{\n"
+                    '  "category": one of "slide", "chart", "code", "diagram", '
+                    '"key_moment", "talking_head", "transition", "advertisement", '
+                    '"other",\n'
+                    '  "value": 1-5 (5 = essential visual information for an essay '
+                    "about this video),\n"
+                    '  "description": brief description of what the frame shows and '
+                    "how it relates to what is being discussed\n"
+                    "}"
+                    f"{context_block}"
+                ),
+                image_b64=b64,
+                image_media_type="image/jpeg",
+                max_tokens=256,
+                model_class="fast",
+            )
+        except Exception as exc:
+            parsed = {"category": "unknown", "value": 0, "description": str(exc)}
 
         parsed["frame"] = frame_path.name
         parsed["timestamp"] = timestamp

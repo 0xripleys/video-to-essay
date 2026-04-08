@@ -17,11 +17,10 @@ full-document call (needs global view). Aggregate chunk scores via mean (or min
 for hallucination).
 """
 
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-import anthropic
+from . import llm_client
 
 DEFAULT_MODEL = "claude-sonnet-4-5-20250929"
 
@@ -160,31 +159,7 @@ _PROPORTIONALITY_TOOL: dict[str, Any] = {
     },
 }
 
-# ---------------------------------------------------------------------------
-# Scoring logic
-# ---------------------------------------------------------------------------
-
-
-def _api_call_with_retry(
-    client: anthropic.Anthropic,
-    max_retries: int = 3,
-    **kwargs: Any,
-) -> anthropic.types.Message:
-    """Make an API call with exponential backoff on rate limit errors."""
-    for attempt in range(max_retries):
-        try:
-            return client.messages.create(**kwargs)
-        except anthropic.RateLimitError:
-            if attempt == max_retries - 1:
-                raise
-            wait = 2 ** attempt * 15  # 15s, 30s, 60s
-            print(f"    Rate limited, retrying in {wait}s...")
-            time.sleep(wait)
-    raise RuntimeError("Unreachable")
-
-
 def _score_one_dimension(
-    client: anthropic.Anthropic,
     transcript: str,
     essay: str,
     dimension: str,
@@ -198,16 +173,15 @@ def _score_one_dimension(
         rubric=_RUBRICS[dimension],
     )
 
-    msg = _api_call_with_retry(
-        client,
-        model=model,
+    return llm_client.text_complete_with_tool(
+        user=prompt,
         max_tokens=4096,
-        tools=[tool],
-        tool_choice={"type": "tool", "name": "score_dimension"},
-        messages=[{"role": "user", "content": prompt}],
+        model_class="smart",
+        model=model,
+        tool_name="score_dimension",
+        tool_description=tool["description"],
+        tool_schema=tool["input_schema"],
     )
-
-    return msg.content[0].input
 
 
 DIMENSION_NAMES = ["faithfulness", "proportionality", "embellishment", "hallucination", "tone"]
@@ -220,8 +194,7 @@ def score_one(
     model: str = DEFAULT_MODEL,
 ) -> dict[str, Any]:
     """Score a single dimension. Returns the dimension result dict."""
-    client = anthropic.Anthropic()
-    return _score_one_dimension(client, transcript, essay, dimension, model)
+    return _score_one_dimension(transcript, essay, dimension, model)
 
 
 def score_essay(
@@ -236,14 +209,13 @@ def score_essay(
 
     Returns a dict with overall_score, dimensions, summary, and model.
     """
-    client = anthropic.Anthropic()
     dimension_names = ["faithfulness", "proportionality", "embellishment", "hallucination", "tone"]
 
     # Score all 5 dimensions in parallel
     dimensions: dict[str, Any] = {}
     with ThreadPoolExecutor(max_workers=5) as pool:
         futures = {
-            pool.submit(_score_one_dimension, client, transcript, essay, name, model): name
+            pool.submit(_score_one_dimension, transcript, essay, name, model): name
             for name in dimension_names
         }
         for future in as_completed(futures):

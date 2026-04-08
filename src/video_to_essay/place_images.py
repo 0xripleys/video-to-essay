@@ -8,33 +8,11 @@ import base64
 import io
 import json
 import re
-import time
 from pathlib import Path
 
-import anthropic
 from PIL import Image
 
-
-def _stream_message(client: anthropic.Anthropic, **kwargs: object) -> str:
-    """Create a message with streaming to handle long requests.
-
-    Includes exponential backoff retry for rate limit errors.
-    """
-    max_retries = 5
-    for attempt in range(max_retries):
-        try:
-            chunks: list[str] = []
-            with client.messages.stream(**kwargs) as stream:
-                for text in stream.text_stream:
-                    chunks.append(text)
-            return "".join(chunks)
-        except anthropic.RateLimitError as e:
-            if attempt == max_retries - 1:
-                raise
-            wait = 2 ** attempt * 15  # 15, 30, 60, 120s
-            print(f"  Rate limited, waiting {wait}s (attempt {attempt + 1}/{max_retries})...")
-            time.sleep(wait)
-    return ""  # unreachable
+from . import llm_client
 
 
 def load_kept_frames(
@@ -93,56 +71,53 @@ def place_images_in_essay(
     paragraphs = essay_text.split("\n\n")
     numbered = "\n\n".join(f"[P{i}] {p}" for i, p in enumerate(paragraphs))
 
-    placement_tool = {
-        "name": "place_images",
-        "description": "Place images into the essay at appropriate positions.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "placements": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "image": {"type": "string", "description": "Image filename"},
-                            "after": {"type": "integer", "description": "Paragraph index to place image after"},
-                            "alt": {"type": "string", "description": "Short description of what the image shows"},
+    placement_schema = {
+        "type": "object",
+        "properties": {
+            "placements": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "image": {
+                            "type": "string",
+                            "description": "Image filename",
                         },
-                        "required": ["image", "after", "alt"],
+                        "after": {
+                            "type": "integer",
+                            "description": "Paragraph index to place image after",
+                        },
+                        "alt": {
+                            "type": "string",
+                            "description": "Short description of what the image shows",
+                        },
                     },
-                }
-            },
-            "required": ["placements"],
+                    "required": ["image", "after", "alt"],
+                },
+            }
         },
+        "required": ["placements"],
     }
 
-    client = anthropic.Anthropic()
-    msg = client.messages.create(
-        model="claude-sonnet-4-5-20250929",
+    tool_input = llm_client.text_complete_with_tool(
+        user=(
+            "Here is a markdown essay with numbered paragraphs [P0], [P1], etc., "
+            "and a set of images extracted from the source video.\n\n"
+            "For each image, decide which paragraph it should be placed AFTER.\n\n"
+            "Rules:\n"
+            "- Place each image after the paragraph where it is most contextually relevant\n"
+            "- Use every image exactly once\n"
+            "- The alt text should be a brief description of what the image shows\n\n"
+            f"Available images:\n{frame_list}\n\n"
+            f"Essay:\n{numbered}"
+        ),
         max_tokens=16384,
-        tools=[placement_tool],
-        tool_choice={"type": "tool", "name": "place_images"},
-        messages=[
-            {
-                "role": "user",
-                "content": (
-                    "Here is a markdown essay with numbered paragraphs [P0], [P1], etc., "
-                    "and a set of images extracted from the source video.\n\n"
-                    "For each image, decide which paragraph it should be placed AFTER.\n\n"
-                    "Rules:\n"
-                    "- Place each image after the paragraph where it is most contextually relevant\n"
-                    "- Use every image exactly once\n"
-                    "- The alt text should be a brief description of what the image shows\n\n"
-                    f"Available images:\n{frame_list}\n\n"
-                    f"Essay:\n{numbered}"
-                ),
-            }
-        ],
+        model_class="smart",
+        tool_name="place_images",
+        tool_description="Place images into the essay at appropriate positions.",
+        tool_schema=placement_schema,
     )
-
-    # Find the tool_use block in the response
-    tool_block = next(b for b in msg.content if b.type == "tool_use")
-    placements: list[dict] = tool_block.input["placements"]
+    placements: list[dict] = tool_input.get("placements", [])
 
     # Group placements by paragraph index
     insert_after: dict[int, list[str]] = {}
@@ -211,8 +186,26 @@ def annotate_essay(
     print(f"Numbered {len(figures)} figures. Adding references via LLM in batches of {batch_size}...")
 
     # Step 2: LLM returns insertion instructions as JSON
-    client = anthropic.Anthropic()
     result = numbered_essay
+
+    annotation_schema = {
+        "type": "object",
+        "properties": {
+            "replacements": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "figure": {"type": "integer"},
+                        "find": {"type": "string"},
+                        "replace": {"type": "string"},
+                    },
+                    "required": ["figure", "find", "replace"],
+                },
+            }
+        },
+        "required": ["replacements"],
+    }
 
     for i in range(0, len(figures), batch_size):
         batch = figures[i : i + batch_size]
@@ -222,44 +215,35 @@ def annotate_essay(
         batch_nums = ", ".join(str(num) for num, _, _ in batch)
         print(f"  Batch: Figure {batch_nums}...")
 
-        msg = client.messages.create(
-            model="claude-sonnet-4-5-20250929",
-            max_tokens=4096,
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
-                        "Below is a markdown essay with numbered figures. Add natural references "
-                        "to ONLY the listed figures by finding a relevant sentence near each figure "
-                        "and inserting a short reference.\n\n"
-                        "Return ONLY a JSON array where each entry specifies a text replacement:\n"
-                        '[{"figure": 1, "find": "exact sentence or phrase from the essay", '
-                        '"replace": "same text with figure reference naturally inserted"}]\n\n'
-                        "Rules:\n"
-                        '- References should read naturally: "(see Figure 1)", "as shown in Figure 3", etc.\n'
-                        "- The 'find' field must be an EXACT substring from the essay (10-80 chars)\n"
-                        "- The 'replace' field should be the same text with only a figure reference added\n"
-                        "- Every listed figure must have at least one reference\n"
-                        "- Return ONLY valid JSON\n\n"
-                        f"Figures to reference:\n{figure_summary}\n\n"
-                        f"Essay:\n{result}"
-                    ),
-                }
-            ],
-        )
-
-        raw = msg.content[0].text.strip()
-        if raw.startswith("```"):
-            raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-
         try:
-            replacements: list[dict] = json.loads(raw)
+            tool_input = llm_client.text_complete_with_tool(
+                user=(
+                    "Below is a markdown essay with numbered figures. Add natural "
+                    "references to ONLY the listed figures by finding a relevant sentence "
+                    "near each figure and inserting a short reference.\n\n"
+                    "Rules:\n"
+                    '- References should read naturally: "(see Figure 1)", "as shown in Figure 3", etc.\n'
+                    "- The 'find' field must be an EXACT substring from the essay (10-80 chars)\n"
+                    "- The 'replace' field should be the same text with only a figure reference added\n"
+                    "- Every listed figure must have at least one reference\n\n"
+                    f"Figures to reference:\n{figure_summary}\n\n"
+                    f"Essay:\n{result}"
+                ),
+                max_tokens=4096,
+                model_class="smart",
+                tool_name="annotate_figures",
+                tool_description=(
+                    "Return exact-string replacements that add figure references."
+                ),
+                tool_schema=annotation_schema,
+            )
+            replacements: list[dict] = tool_input.get("replacements", [])
             for r in replacements:
                 find_text = r.get("find", "")
                 replace_text = r.get("replace", "")
                 if find_text and replace_text and find_text in result:
                     result = result.replace(find_text, replace_text, 1)
-        except (json.JSONDecodeError, KeyError) as e:
+        except Exception as e:
             print(f"  WARNING: Could not parse annotation batch: {e}")
 
     # Report figure reference coverage

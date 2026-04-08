@@ -11,8 +11,9 @@ import re
 import subprocess
 from pathlib import Path
 
-import anthropic
 import httpx
+
+from . import llm_client
 
 DEEPGRAM_API_URL = "https://api.deepgram.com/v1/listen"
 
@@ -164,14 +165,12 @@ Using the video metadata and conversational context, map each speaker ID to thei
 Return ONLY a valid JSON object, no other text. Example:
 {{"0": "Tyler Neville", "1": "Quinn Thompson", "2": "Felix Jauvin"}}"""
 
-    client = anthropic.Anthropic()
-    msg = client.messages.create(
-        model="claude-haiku-4-5-20251001",
+    response_text = llm_client.text_complete(
+        prompt,
         max_tokens=256,
-        messages=[{"role": "user", "content": prompt}],
+        model_class="fast",
     )
-
-    response_text = msg.content[0].text.strip()
+    response_text = response_text.strip()
     # Extract JSON from response (in case Haiku wraps it in markdown)
     json_match = re.search(r"\{[^}]+\}", response_text, re.DOTALL)
     if json_match:

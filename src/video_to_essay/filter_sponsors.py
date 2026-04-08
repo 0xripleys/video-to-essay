@@ -8,7 +8,7 @@ returning a cleaned transcript and timestamp ranges for downstream filtering.
 import json
 import re
 
-import anthropic
+from . import llm_client
 
 
 def filter_sponsors(transcript: str) -> tuple[str, list[tuple[int, int]]]:
@@ -18,36 +18,28 @@ def filter_sponsors(transcript: str) -> tuple[str, list[tuple[int, int]]]:
         A tuple of (cleaned_transcript, sponsor_ranges) where sponsor_ranges
         is a list of (start_seconds, end_seconds) pairs.
     """
-    client = anthropic.Anthropic()
-
-    msg = client.messages.create(
-        model="claude-haiku-4-5-20251001",
+    raw = llm_client.text_complete(
+        (
+            "Analyze this timestamped transcript and identify any sponsor reads, "
+            "advertisements, or promotional segments. These include:\n"
+            "- Direct sponsor mentions (\"this video is brought to you by...\")\n"
+            "- Product promotions and discount codes\n"
+            "- Calls to action for sponsor products/services\n"
+            "- Ad reads embedded within the content\n\n"
+            "Respond with ONLY valid JSON, no other text:\n"
+            "{\n"
+            '  "sponsor_segments": [\n'
+            '    {"start": "MM:SS", "end": "MM:SS", "reason": "brief description"}\n'
+            "  ]\n"
+            "}\n\n"
+            "If there are no sponsor segments, return an empty list.\n"
+            "Use the timestamps from the transcript to mark segment boundaries.\n\n"
+            f"Transcript:\n{transcript}"
+        ),
         max_tokens=1024,
-        messages=[
-            {
-                "role": "user",
-                "content": (
-                    "Analyze this timestamped transcript and identify any sponsor reads, "
-                    "advertisements, or promotional segments. These include:\n"
-                    "- Direct sponsor mentions (\"this video is brought to you by...\")\n"
-                    "- Product promotions and discount codes\n"
-                    "- Calls to action for sponsor products/services\n"
-                    "- Ad reads embedded within the content\n\n"
-                    "Respond with ONLY valid JSON, no other text:\n"
-                    "{\n"
-                    '  "sponsor_segments": [\n'
-                    '    {"start": "MM:SS", "end": "MM:SS", "reason": "brief description"}\n'
-                    "  ]\n"
-                    "}\n\n"
-                    "If there are no sponsor segments, return an empty list.\n"
-                    "Use the timestamps from the transcript to mark segment boundaries.\n\n"
-                    f"Transcript:\n{transcript}"
-                ),
-            }
-        ],
+        model_class="fast",
     )
-
-    raw = msg.content[0].text.strip()
+    raw = raw.strip()
     # Handle markdown code blocks
     if raw.startswith("```"):
         raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()

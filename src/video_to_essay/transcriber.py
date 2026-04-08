@@ -11,14 +11,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+from . import llm_client
 
-def _stream_message(client: "anthropic.Anthropic", **kwargs: object) -> str:
-    """Create a message with streaming to handle long requests."""
-    chunks: list[str] = []
-    with client.messages.stream(**kwargs) as stream:
-        for text in stream.text_stream:
-            chunks.append(text)
-    return "".join(chunks)
+
+def _anthropic_key_override(api_key: str | None) -> str | None:
+    """Only forward explicit API key overrides on Anthropic provider."""
+    if not api_key:
+        return None
+    return api_key if llm_client.get_config().provider == "anthropic" else None
 
 
 def extract_video_id(url: str) -> str:
@@ -40,35 +40,26 @@ def extract_style_profile(transcript: str, api_key: str | None = None) -> str:
     Sends the first ~8k chars of the transcript to Haiku and returns a
     ~200-word profile describing formality, phrasing, humor, etc.
     """
-    import anthropic
-
-    client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
-
     sample = transcript[:8000]
-
-    msg = client.messages.create(
-        model="claude-haiku-4-5-20251001",
+    return llm_client.text_complete(
+        (
+            "Analyze the speaking style of this YouTube transcript excerpt. "
+            "Return a compact style profile (~200 words) covering:\n"
+            "- Formality level (casual/semi-formal/formal)\n"
+            "- Characteristic phrases or verbal tics\n"
+            "- How the speaker addresses the audience\n"
+            "- Sentence patterns (short punchy, long flowing, fragments, etc.)\n"
+            "- Humor usage (sarcasm, self-deprecation, deadpan, none, etc.)\n"
+            "- Emotional tone (excited, calm, skeptical, enthusiastic, etc.)\n"
+            "- 3 short representative quotes that capture the voice\n\n"
+            "Be specific and concrete. This profile will be used to preserve "
+            "the speaker's voice when converting the transcript to written form.\n\n"
+            f"{sample}"
+        ),
         max_tokens=512,
-        messages=[{
-            "role": "user",
-            "content": (
-                "Analyze the speaking style of this YouTube transcript excerpt. "
-                "Return a compact style profile (~200 words) covering:\n"
-                "- Formality level (casual/semi-formal/formal)\n"
-                "- Characteristic phrases or verbal tics\n"
-                "- How the speaker addresses the audience\n"
-                "- Sentence patterns (short punchy, long flowing, fragments, etc.)\n"
-                "- Humor usage (sarcasm, self-deprecation, deadpan, none, etc.)\n"
-                "- Emotional tone (excited, calm, skeptical, enthusiastic, etc.)\n"
-                "- 3 short representative quotes that capture the voice\n\n"
-                "Be specific and concrete. This profile will be used to preserve "
-                "the speaker's voice when converting the transcript to written form.\n\n"
-                f"{sample}"
-            ),
-        }],
+        model_class="fast",
+        api_key_override=_anthropic_key_override(api_key),
     )
-
-    return msg.content[0].text
 
 
 def _is_multi_speaker(transcript: str) -> bool:
@@ -91,37 +82,28 @@ def extract_multi_speaker_style_profile(
     Sends the first ~8k chars to Haiku and returns a combined multi-speaker
     style analysis covering each speaker's distinct voice.
     """
-    import anthropic
-
-    client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
-
     speakers = _extract_speakers(transcript)
     sample = transcript[:8000]
-
-    msg = client.messages.create(
-        model="claude-haiku-4-5-20251001",
+    return llm_client.text_complete(
+        (
+            "Analyze the speaking styles in this multi-speaker transcript excerpt. "
+            f"The speakers are: {', '.join(speakers)}.\n\n"
+            "For EACH speaker, return a compact style profile (~100 words) covering:\n"
+            "- Formality level (casual/semi-formal/formal)\n"
+            "- Characteristic phrases or verbal tics\n"
+            "- Role in conversation (host, guest, interviewer, etc.)\n"
+            "- Sentence patterns (short punchy, long flowing, fragments, etc.)\n"
+            "- Humor usage (sarcasm, self-deprecation, deadpan, none, etc.)\n"
+            "- Emotional tone (excited, calm, skeptical, enthusiastic, etc.)\n"
+            "- 2 short representative quotes that capture their voice\n\n"
+            "Be specific and concrete. These profiles will be used to preserve "
+            "each speaker's distinct voice when converting the transcript.\n\n"
+            f"{sample}"
+        ),
         max_tokens=1024,
-        messages=[{
-            "role": "user",
-            "content": (
-                "Analyze the speaking styles in this multi-speaker transcript excerpt. "
-                f"The speakers are: {', '.join(speakers)}.\n\n"
-                "For EACH speaker, return a compact style profile (~100 words) covering:\n"
-                "- Formality level (casual/semi-formal/formal)\n"
-                "- Characteristic phrases or verbal tics\n"
-                "- Role in conversation (host, guest, interviewer, etc.)\n"
-                "- Sentence patterns (short punchy, long flowing, fragments, etc.)\n"
-                "- Humor usage (sarcasm, self-deprecation, deadpan, none, etc.)\n"
-                "- Emotional tone (excited, calm, skeptical, enthusiastic, etc.)\n"
-                "- 2 short representative quotes that capture their voice\n\n"
-                "Be specific and concrete. These profiles will be used to preserve "
-                "each speaker's distinct voice when converting the transcript.\n\n"
-                f"{sample}"
-            ),
-        }],
+        model_class="fast",
+        api_key_override=_anthropic_key_override(api_key),
     )
-
-    return msg.content[0].text
 
 
 def _timestamp_instructions(video_id: str) -> str:
@@ -137,7 +119,7 @@ Do NOT place timestamps on their own line — they must be part of the heading."
 
 
 def _transcript_to_essay_single(
-    transcript: str, client: "anthropic.Anthropic", api_key: str | None,
+    transcript: str, api_key: str | None,
     video_id: str | None = None,
 ) -> str:
     """Single-speaker essay generation (original path)."""
@@ -196,27 +178,24 @@ The company allocated substantial resources to address the challenge, and the st
 
 ---"""
 
-    result = _stream_message(
-        client,
-        model="claude-sonnet-4-5-20250929",
-        max_tokens=64000,
-        system=system_prompt,
-        messages=[{
-            "role": "user",
-            "content": (
+    return "".join(
+        llm_client.text_stream(
+            (
                 f"{few_shot_examples}\n\n"
                 "Now convert this transcript into an essay. Preserve the speaker's "
                 "voice exactly as described in the style profile above.\n\n"
                 f"{transcript}"
             ),
-        }],
+            system=system_prompt,
+            max_tokens=64000,
+            model_class="smart",
+            api_key_override=_anthropic_key_override(api_key),
+        )
     )
-
-    return result
 
 
 def _transcript_to_essay_multi(
-    transcript: str, client: "anthropic.Anthropic", api_key: str | None,
+    transcript: str, api_key: str | None,
     video_id: str | None = None,
 ) -> str:
     """Multi-speaker essay generation (dialogue-style)."""
@@ -292,23 +271,21 @@ The company allocated substantial resources to address the challenge, and the st
 
 ---"""
 
-    result = _stream_message(
-        client,
-        model="claude-sonnet-4-5-20250929",
-        max_tokens=64000,
-        system=system_prompt,
-        messages=[{
-            "role": "user",
-            "content": (
+    return "".join(
+        llm_client.text_stream(
+            (
                 f"{few_shot_examples}\n\n"
                 "Now convert this multi-speaker transcript into a clean dialogue. "
-                "Preserve each speaker's distinct voice as described in the profiles above.\n\n"
+                "Preserve each speaker's distinct voice as described in the "
+                "profiles above.\n\n"
                 f"{transcript}"
             ),
-        }],
+            system=system_prompt,
+            max_tokens=64000,
+            model_class="smart",
+            api_key_override=_anthropic_key_override(api_key),
+        )
     )
-
-    return result
 
 
 def transcript_to_essay(
@@ -323,13 +300,9 @@ def transcript_to_essay(
 
     If video_id is provided, timestamps in the essay link to the YouTube video.
     """
-    import anthropic
-
-    client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
-
     if _is_multi_speaker(transcript):
-        return _transcript_to_essay_multi(transcript, client, api_key, video_id)
-    return _transcript_to_essay_single(transcript, client, api_key, video_id)
+        return _transcript_to_essay_multi(transcript, api_key, video_id)
+    return _transcript_to_essay_single(transcript, api_key, video_id)
 
 
 def fetch_video_metadata(

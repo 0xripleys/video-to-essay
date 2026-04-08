@@ -113,6 +113,10 @@ All stored in `.env` at project root:
 |----------|---------|---------|
 | `DATABASE_URL` | Workers + Web | Supabase Postgres connection string |
 | `ANTHROPIC_API_KEY` | Workers (process) | Claude API for essay/frame/sponsor tasks |
+| `LLM_PROVIDER` | Workers + CLI | `anthropic` (default) or `qwen` for provider routing |
+| `QWEN_BASE_URL` | Workers + CLI | Modal/vLLM endpoint base URL (with or without `/v1`) |
+| `QWEN_API_KEY` | Workers + CLI | Bearer token for the Qwen endpoint |
+| `QWEN_MODEL` | Workers + CLI | Qwen served model name (default: `qwen3-vl-32b`) |
 | `DEEPGRAM_API_KEY` | Workers (process) | Deepgram Nova-3 transcription |
 | `AGENTMAIL_API_KEY` | Workers (deliver) | Email sending |
 | `AGENTMAIL_INBOX_ID` | Workers (deliver) | AgentMail sender inbox |
