@@ -23,7 +23,7 @@ dependencies = [
 video-to-essay = "video_to_essay.main:app"
 
 [dependency-groups]
-dev = ["pytest>=8.0", "ruff>=0.4", "testcontainers[postgres]>=4.0"]
+dev = ["pytest>=8.0", "respx>=0.22", "ruff>=0.4", "testcontainers[postgres]>=4.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

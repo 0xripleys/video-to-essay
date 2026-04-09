@@ -122,6 +122,20 @@ def _classify_videos(video_ids: list[str], api_key: str) -> dict[str, VideoClass
     return result
 
 
+def _should_skip_video(
+    info: VideoClassification | None,
+    all_exclude_livestreams: bool,
+) -> str | None:
+    """Return a skip reason string, or None if the video should be kept."""
+    if info and info.is_active_stream:
+        return "active_stream"
+    if info and info.is_short:
+        return "short"
+    if info and info.is_livestream and all_exclude_livestreams:
+        return "livestream"
+    return None
+
+
 def _check_channel(channel: dict, api_key: str) -> int:
     """Fetch uploads playlist for a channel and insert any new videos. Returns count of new videos."""
     youtube_channel_id = channel["youtube_channel_id"]
@@ -206,12 +220,13 @@ def _check_channel(channel: dict, api_key: str) -> int:
     skipped_livestreams = 0
     for c in candidates:
         info = classifications.get(c["video_id"])
-        if info and info.is_active_stream:
+        reason = _should_skip_video(info, all_exclude_livestreams)
+        if reason == "active_stream":
             continue
-        if info and info.is_short:
+        if reason == "short":
             skipped_shorts += 1
             continue
-        if info and info.is_livestream and all_exclude_livestreams:
+        if reason == "livestream":
             skipped_livestreams += 1
             continue
         video_url = f"https://www.youtube.com/watch?v={c['video_id']}"
