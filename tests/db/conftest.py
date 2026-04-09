@@ -7,10 +7,16 @@ import psycopg
 import pytest
 from testcontainers.postgres import PostgresContainer
 
-# Docker Desktop on macOS uses a non-standard socket path
-_DOCKER_SOCK = Path.home() / ".docker/run/docker.sock"
-if not os.environ.get("DOCKER_HOST") and _DOCKER_SOCK.exists():
-    os.environ["DOCKER_HOST"] = f"unix://{_DOCKER_SOCK}"
+# Detect Docker socket: Colima, Docker Desktop, or default
+if not os.environ.get("DOCKER_HOST"):
+    _COLIMA_SOCK = Path.home() / ".colima/default/docker.sock"
+    _DESKTOP_SOCK = Path.home() / ".docker/run/docker.sock"
+    if _COLIMA_SOCK.exists():
+        os.environ["DOCKER_HOST"] = f"unix://{_COLIMA_SOCK}"
+        # Ryuk mounts the Docker socket which fails with Colima's virtiofs
+        os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
+    elif _DESKTOP_SOCK.exists():
+        os.environ["DOCKER_HOST"] = f"unix://{_DESKTOP_SOCK}"
 
 
 @pytest.fixture(scope="session")

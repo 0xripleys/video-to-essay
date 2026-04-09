@@ -382,6 +382,9 @@ def download_video(
         sys.executable, "-m", "yt_dlp",
         "--remote-components", "ejs:github",
         "-f", "b[height<=360][acodec!=none]/bv*[height<=360]+ba/b[acodec!=none]",
+        "--socket-timeout", "30",
+        "--retries", "3",
+        "--fragment-retries", "3",
         "-o", str(output_dir / "video.%(ext)s"),
         f"https://www.youtube.com/watch?v={video_id}",
     ]
@@ -407,7 +410,7 @@ def download_video(
             f"No audio would be available for transcription."
         )
     logger.info("Format check passed (acodec=%s), downloading video %s...", acodec, video_id)
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
 
     if result.returncode != 0:
         raise RuntimeError(
