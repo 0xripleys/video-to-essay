@@ -47,9 +47,12 @@ Logs are written to `logs/` (`discover.log`, `download.log`, `process.log`, `del
 ### Tests
 
 ```bash
-uv run pytest tests/ -x      # Run all pure tests (~1s)
-uv run pytest tests/ -x -v   # Verbose output
+uv run pytest tests/ -x --ignore=tests/test_smoke.py   # Pure tests (~1s)
+uv run pytest tests/test_smoke.py -x -k "not nextjs"   # Smoke tests (import + lint)
+uv run pytest tests/ -x -v                              # Everything
 ```
+
+CI runs on push/PR via GitHub Actions (`.github/workflows/ci.yml`).
 
 For integration testing, verify changes manually by running against a real YouTube URL.
 

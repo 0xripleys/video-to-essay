@@ -28,7 +28,7 @@ def _stream_message(client: anthropic.Anthropic, **kwargs: object) -> str:
                 for text in stream.text_stream:
                     chunks.append(text)
             return "".join(chunks)
-        except anthropic.RateLimitError as e:
+        except anthropic.RateLimitError:
             if attempt == max_retries - 1:
                 raise
             wait = 2 ** attempt * 15  # 15, 30, 60, 120s
@@ -319,7 +319,7 @@ def _print_image_stats(
     kept_names = {str(f["frame"]) for f in kept}
 
     total_placed = len(placed_names) or data_uri_count
-    print(f"\nImage placement stats:")
+    print("\nImage placement stats:")
     print(f"  Available: {len(kept_names)}")
     print(f"  Placed:    {total_placed}")
     if placed_names:

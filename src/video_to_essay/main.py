@@ -162,7 +162,7 @@ def _step_filter_sponsors(video_id: str, run_dir: Path, force: bool) -> bool:
         print(f"Filtered transcript exists, skipping ({clean_path})")
         return True
     if not transcript_path.exists():
-        print(f"ERROR: no transcript found — run transcript step first")
+        print("ERROR: no transcript found — run transcript step first")
         return False
     try:
         cleaned, sponsor_ranges = filter_sponsors(transcript_path.read_text())
@@ -192,7 +192,7 @@ def _step_essay(video_id: str, run_dir: Path, force: bool) -> bool:
         print(f"Essay exists, skipping ({out})")
         return True
     if not transcript_path.exists():
-        print(f"ERROR: no transcript found — run filter-sponsors step first")
+        print("ERROR: no transcript found — run filter-sponsors step first")
         return False
     try:
         text = transcript_to_essay(transcript_path.read_text(), video_id=video_id)

@@ -1,7 +1,7 @@
 # Testing Strategy — Comprehensive Test Wishlist
 
 **Date:** 2026-04-08
-**Status:** In Progress — pure tests complete (43/43), remaining: db, db+mock, db+s3, smoke
+**Status:** In Progress — pure (43/43) + smoke (3/5) complete, remaining: db, db+mock, db+s3, 2 smoke (auth)
 
 ## Overview
 
@@ -257,13 +257,13 @@ A comprehensive inventory of tests for the video-to-essay project, organized by 
 | [db] | 26 | SQL bugs, schema drift, query logic errors | Testcontainers Postgres | Not started |
 | [db+mock] | 6 | Worker pipeline logic, state machine errors | Postgres + mocked YouTube/S3/email APIs | Not started |
 | [db+s3] | 1 | S3 integration in API routes | Postgres + LocalStack | Not started |
-| [smoke] | 5 | Build failures, import errors, lint regressions | Build tools only | Not started |
+| [smoke] | 5 | Build failures, import errors, lint regressions | Build tools only | **3/5 done** (build, import, lint) |
 | **Total** | **81** | | | |
 
 ## Recommended Implementation Order
 
 1. ~~**[pure] tests (43)** — Zero infrastructure, runs in <1s. Highest ROI.~~ **Done** (2026-04-08)
-2. **[smoke] tests (5)** — One-liners that catch build/import/lint regressions.
+2. ~~**[smoke] tests (5)** — One-liners that catch build/import/lint regressions.~~ **3/5 done** (2026-04-08) — build, import, lint via pytest + GitHub Actions CI
 3. **[db] tests (26)** — Add Testcontainers fixture, test all SQL queries.
 4. **[db+mock] worker tests (6)** — Add after the above are stable.
 5. **[db+s3] tests (1)** — Only if S3 integration becomes a pain point.

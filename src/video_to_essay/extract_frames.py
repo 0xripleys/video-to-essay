@@ -14,7 +14,6 @@ import base64
 import json
 import re
 import subprocess
-import sys
 from pathlib import Path
 
 import anthropic
@@ -325,7 +324,7 @@ def extract_and_classify(
     results_path = output_dir / "classifications.json"
     results_path.write_text(json.dumps(classifications, indent=2))
 
-    print(f"\nResults:")
+    print("\nResults:")
     print(f"  Total sampled:    {len(frames)}")
     print(f"  After dedup:      {len(unique_frames)}")
     print(f"  After filtering:  {len(kept)}")
@@ -333,7 +332,7 @@ def extract_and_classify(
     print(f"  Full results:     {results_path}")
 
     if kept:
-        print(f"\nKept frames:")
+        print("\nKept frames:")
         for item in kept:
             print(
                 f"  [{item['timestamp']}] {item['frame']}: "

@@ -1,6 +1,5 @@
 """Generate a Key Takeaways section and prepend it to an essay."""
 
-import json
 import re
 from pathlib import Path
 
