@@ -23,10 +23,18 @@ jobs:
         run: uv run ruff check
 
       - name: Pure tests
-        run: uv run pytest tests/ -x --ignore=tests/test_smoke.py --ignore=tests/db/
+        run: uv run pytest tests/ -x --ignore=tests/test_smoke.py --ignore=tests/db/ --cov=video_to_essay
 
       - name: Smoke tests (import + lint)
         run: uv run pytest tests/test_smoke.py -x -k "not nextjs_build"
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-pure
+          path: .coverage
+          include-hidden-files: true
 
   test-database:
     runs-on: ubuntu-latest
@@ -41,7 +49,49 @@ jobs:
         run: uv sync --group dev
 
       - name: Database tests
-        run: uv run pytest tests/db/ -x
+        run: uv run pytest tests/db/ -x --cov=video_to_essay
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-db
+          path: .coverage
+          include-hidden-files: true
+
+  coverage-report:
+    runs-on: ubuntu-latest
+    needs: [test-python, test-database]
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Download coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+
+      - name: Merge and report
+        run: |
+          # Rename so coverage combine can find them
+          cp coverage-pure/.coverage .coverage.pure
+          cp coverage-db/.coverage .coverage.db
+          uv run coverage combine .coverage.pure .coverage.db
+          uv run coverage report --show-missing --format=markdown > coverage-report.md
+          cat coverage-report.md
+
+      - name: Add coverage to job summary
+        run: |
+          echo '## Test Coverage' >> $GITHUB_STEP_SUMMARY
+          echo '' >> $GITHUB_STEP_SUMMARY
+          cat coverage-report.md >> $GITHUB_STEP_SUMMARY
 
   test-web:
     runs-on: ubuntu-latest
