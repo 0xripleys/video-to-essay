@@ -23,7 +23,10 @@ jobs:
         run: uv run ruff check
 
       - name: Pure tests
-        run: uv run pytest tests/ -x --ignore=tests/test_smoke.py
+        run: uv run pytest tests/ -x --ignore=tests/test_smoke.py --ignore=tests/db/
+
+      - name: Database tests
+        run: uv run pytest tests/db/ -x
 
       - name: Smoke tests (import + lint)
         run: uv run pytest tests/test_smoke.py -x -k "not nextjs_build"
