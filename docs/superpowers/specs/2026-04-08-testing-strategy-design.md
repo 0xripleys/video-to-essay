@@ -1,7 +1,7 @@
 # Testing Strategy — Comprehensive Test Wishlist
 
 **Date:** 2026-04-08
-**Status:** In Progress — pure (43/43) + db (26/26) + db+mock (11/11) + smoke (3/5) complete, remaining: db+s3 (1), 2 smoke (auth)
+**Status:** Complete — pure (43/43) + db (26/26) + db+mock (11/11) + smoke (3/5). Remaining items deferred: db+s3 (1, only if S3 becomes a pain point), 2 smoke (auth).
 
 ## Overview
 
