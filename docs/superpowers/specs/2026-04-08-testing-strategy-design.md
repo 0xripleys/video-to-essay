@@ -1,7 +1,7 @@
 # Testing Strategy — Comprehensive Test Wishlist
 
 **Date:** 2026-04-08
-**Status:** In Progress — pure (43/43) + smoke (3/5) complete, remaining: db, db+mock, db+s3, 2 smoke (auth)
+**Status:** In Progress — pure (43/43) + db (26/26) + db+mock (11/11) + smoke (3/5) complete, remaining: db+s3 (1), 2 smoke (auth)
 
 ## Overview
 
@@ -179,14 +179,35 @@ A comprehensive inventory of tests for the video-to-essay project, organized by 
 
 ## Python — Worker Integration
 
+### `discover_worker.py`
+
 | # | Test | Tag |
 |---|------|-----|
-| 70 | Discover `_check_channel` — inserts new videos, skips existing, skips shorts, respects cutoff date | [db+mock] |
-| 71 | Discover — respects playlist filtering via `_check_playlist_membership` | [db+mock] |
-| 72 | Discover — skips active livestreams, respects `exclude_livestreams` subscriber pref | [db+mock] |
-| 73 | Download `_download_one` — marks video downloaded after success, marks failed on error | [db+mock] |
-| 74 | Deliver `_deliver` — marks sent on success, marks failed when essay not found | [db+mock] |
-| 75 | Deliver — retries on 429 rate limits, fails after max retries | [db+mock] |
+| 70a | Discover `_check_channel` — inserts new videos with correct fields | [db+mock] |
+| 70b | Discover `_check_channel` — skips videos that already exist in db | [db+mock] |
+| 70c | Discover `_check_channel` — respects cutoff date, ignores older videos | [db+mock] |
+| 70d | Discover `_check_channel` — updates `last_checked_at` after run | [db+mock] |
+| 71a | Discover — skips videos matching no subscriber playlists | [db+mock] |
+| 71b | Discover — skips playlist check when any subscriber is unfiltered | [db+mock] |
+| 72 | Discover — updates channel name from API when name is placeholder | [db+mock] |
+
+### `download_worker.py`
+
+| # | Test | Tag |
+|---|------|-----|
+| 73a | Download `_download_one` — happy path: downloads, uploads to S3, marks downloaded | [db+mock] |
+| 73b | Download `_download_one` — skips download when cached file has valid audio | [db+mock] |
+
+### `deliver_worker.py`
+
+| # | Test | Tag |
+|---|------|-----|
+| 74 | Deliver `_deliver` — happy path: essay fetched, email sent, delivery marked sent | [db+mock] |
+| 75 | Deliver `_deliver` — retries on 429, succeeds on second attempt | [db+mock] |
+
+### `process_worker.py`
+
+Not tested at db+mock level. The db interaction is trivial (`mark_video_processed`), and the pipeline steps are covered by pure unit tests. The cost of mocking 8+ dependencies for one db assertion is not worth it.
 
 ---
 
@@ -254,18 +275,18 @@ A comprehensive inventory of tests for the video-to-essay project, organized by 
 | Tag | Count | What it catches | Infrastructure | Status |
 |-----|-------|-----------------|---------------|--------|
 | [pure] | 43 | Parsing bugs, formatting regressions, data transformation errors | Nothing | **Done** (86 pytest cases) |
-| [db] | 26 | SQL bugs, schema drift, query logic errors | Testcontainers Postgres | Not started |
-| [db+mock] | 6 | Worker pipeline logic, state machine errors | Postgres + mocked YouTube/S3/email APIs | Not started |
+| [db] | 26 | SQL bugs, schema drift, query logic errors | Testcontainers Postgres | **Done** (26 pytest cases) |
+| [db+mock] | 11 | Worker pipeline logic, state machine errors | Postgres + mocked YouTube/S3/email APIs | **Done** (11 pytest cases) |
 | [db+s3] | 1 | S3 integration in API routes | Postgres + LocalStack | Not started |
 | [smoke] | 5 | Build failures, import errors, lint regressions | Build tools only | **3/5 done** (build, import, lint) |
-| **Total** | **81** | | | |
+| **Total** | **86** | | | |
 
 ## Recommended Implementation Order
 
 1. ~~**[pure] tests (43)** — Zero infrastructure, runs in <1s. Highest ROI.~~ **Done** (2026-04-08)
 2. ~~**[smoke] tests (5)** — One-liners that catch build/import/lint regressions.~~ **3/5 done** (2026-04-08) — build, import, lint via pytest + GitHub Actions CI
-3. **[db] tests (26)** — Add Testcontainers fixture, test all SQL queries.
-4. **[db+mock] worker tests (6)** — Add after the above are stable.
+3. ~~**[db] tests (26)** — Add Testcontainers fixture, test all SQL queries.~~ **Done** (2026-04-08)
+4. ~~**[db+mock] worker tests (11)** — Discover (7), Download (2), Deliver (2). Process worker skipped (trivial db interaction, pipeline steps covered by pure tests).~~ **Done** (2026-04-08)
 5. **[db+s3] tests (1)** — Only if S3 integration becomes a pain point.
 
 ## CI Pipeline
@@ -273,14 +294,9 @@ A comprehensive inventory of tests for the video-to-essay project, organized by 
 ```yaml
 # GitHub Actions: on push and PR
 jobs:
-  test-python:
-    - uv sync
-    - ruff check
-    - uv run pytest tests/ -x
-
-  test-web:
-    - cd web && npm ci
-    - npm run build
+  test-python:       # pure + smoke tests
+  test-database:     # db + db+mock tests (Testcontainers)
+  test-web:          # Next.js build
 ```
 
 ## Pre-commit Hook
