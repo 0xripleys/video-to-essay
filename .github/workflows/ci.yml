@@ -25,11 +25,23 @@ jobs:
       - name: Pure tests
         run: uv run pytest tests/ -x --ignore=tests/test_smoke.py --ignore=tests/db/
 
-      - name: Database tests
-        run: uv run pytest tests/db/ -x
-
       - name: Smoke tests (import + lint)
         run: uv run pytest tests/test_smoke.py -x -k "not nextjs_build"
+
+  test-database:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Database tests
+        run: uv run pytest tests/db/ -x
 
   test-web:
     runs-on: ubuntu-latest
