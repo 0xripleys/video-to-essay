@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, apiJson, proxyImageUrl } from "../lib/api";
+import { extractVideoId } from "../lib/youtube";
 
 interface VideoResult {
   videoId: string;
@@ -54,8 +55,8 @@ export default function ConvertVideoModal({
     text.includes("youtube.com") || text.includes("youtu.be");
 
   const resolveUrl = useCallback(async (url: string) => {
-    const videoIdMatch = url.match(/(?:v=|youtu\.be\/)([\w-]{11})/);
-    if (!videoIdMatch) {
+    const videoId = extractVideoId(url);
+    if (!videoId) {
       setError("Couldn't find a video at this URL");
       return;
     }
@@ -65,25 +66,25 @@ export default function ConvertVideoModal({
 
     try {
       const data = await apiJson<VideoResult[]>(
-        `/api/videos/search?q=${encodeURIComponent(videoIdMatch[1])}`,
+        `/api/videos/search?q=${encodeURIComponent(videoId)}`,
       );
-      const match = data.find((v) => v.videoId === videoIdMatch[1]) ?? data[0];
+      const match = data.find((v) => v.videoId === videoId) ?? data[0];
       if (match) {
         setSelected(match);
       } else {
         setSelected({
-          videoId: videoIdMatch[1],
+          videoId,
           title: "YouTube Video",
           channelTitle: "",
-          thumbnailUrl: `https://i.ytimg.com/vi/${videoIdMatch[1]}/mqdefault.jpg`,
+          thumbnailUrl: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
         });
       }
     } catch {
       setSelected({
-        videoId: videoIdMatch[1],
+        videoId,
         title: "YouTube Video",
         channelTitle: "",
-        thumbnailUrl: `https://i.ytimg.com/vi/${videoIdMatch[1]}/mqdefault.jpg`,
+        thumbnailUrl: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
       });
     } finally {
       setResolving(false);

@@ -17,6 +17,17 @@ function extractThumbnail(thumbnails: { medium?: { url: string }; default?: { ur
   return raw ? ensureHttps(raw) : "";
 }
 
+const YOUTUBE_VIDEO_ID_RE =
+  /(?:[?&]v=|youtu\.be\/|\/live\/|\/shorts\/|\/embed\/)([\w-]{11})/;
+
+export const YOUTUBE_URL_RE =
+  /^https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?(?:[\w=&-]+&)?v=|live\/|shorts\/|embed\/)|youtu\.be\/)[\w-]{11}/;
+
+export function extractVideoId(input: string): string | null {
+  const m = input.match(YOUTUBE_VIDEO_ID_RE);
+  return m ? m[1] : null;
+}
+
 export function extractPlaylistId(input: string): string | null {
   const listMatch = input.match(/[?&]list=([\w-]+)/);
   if (listMatch) return listMatch[1];

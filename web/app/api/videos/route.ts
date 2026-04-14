@@ -2,9 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/app/lib/auth";
 import { getOrCreateVideo, createDelivery, listUserVideos } from "@/app/lib/db";
 import { getPostHogClient } from "@/app/lib/posthog";
-
-const YOUTUBE_URL_RE =
-  /^https?:\/\/(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)[\w-]{11}/;
+import { YOUTUBE_URL_RE, extractVideoId } from "@/app/lib/youtube";
 
 export async function GET() {
   let user;
@@ -53,14 +51,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ detail: "Invalid YouTube URL" }, { status: 422 });
   }
 
-  const videoIdMatch = url.match(/(?:v=|youtu\.be\/)([\w-]{11})/);
-  if (!videoIdMatch) {
+  const youtubeVideoId = extractVideoId(url);
+  if (!youtubeVideoId) {
     return NextResponse.json(
       { detail: "Could not extract video ID" },
       { status: 422 },
     );
   }
-  const youtubeVideoId = videoIdMatch[1];
 
   const video = await getOrCreateVideo(youtubeVideoId, url);
   await createDelivery(video.id, user.id, "one_off");

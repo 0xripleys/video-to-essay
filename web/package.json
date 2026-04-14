@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "test": "node --experimental-strip-types --test 'app/**/*.test.ts'"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.800.0",
