@@ -268,7 +268,7 @@ def test_pipeline_happy_path(
     assert placed_frames[1]["frame"] == "frame_0004.jpg"
 
     # annotate_essay received the essay with images placed
-    mock_annotate.assert_called_once_with(ESSAY_WITH_IMAGES)
+    mock_annotate.assert_called_once_with(ESSAY_WITH_IMAGES, model=None)
 
     # -----------------------------------------------------------------------
     # Every mock called exactly once

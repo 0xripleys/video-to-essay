@@ -274,7 +274,11 @@ def _step_extract_frames(
 
 
 def _step_place_images(
-    video_id: str, run_dir: Path, embed: bool, force: bool
+    video_id: str,
+    run_dir: Path,
+    embed: bool,
+    force: bool,
+    model: str | None = None,
 ) -> bool:
     essay_dir = _step_dir(run_dir, "essay")
     frames_dir = _step_dir(run_dir, "frames")
@@ -310,12 +314,16 @@ def _step_place_images(
             return True
 
         # Place images
-        with_images = place_images_in_essay(essay_text, kept, image_prefix)
+        with llm.run_context(place_dir):
+            with_images = place_images_in_essay(
+                essay_text, kept, image_prefix, model=model,
+            )
         out_placed.write_text(with_images)
         print(f"Essay with images -> {out_placed}")
 
         # Annotate figures
-        annotated = annotate_essay(with_images)
+        with llm.run_context(place_dir):
+            annotated = annotate_essay(with_images, model=model)
         if embed:
             annotated = embed_images(annotated, kept_dir, image_prefix)
             print("Embedded images as base64 data URIs")
@@ -596,10 +604,14 @@ def place_images_cmd(
     embed: bool = typer.Option(True, "--embed/--no-embed", help="Embed images as base64 data URIs"),
     force: bool = typer.Option(False, "--force", help="Overwrite existing outputs"),
     output_dir: Path | None = typer.Option(None, "--output-dir", "-o", help="Base output directory (default: runs/)"),
+    model: str | None = typer.Option(
+        None, "--model", "-m",
+        help="Override the model for image placement + figure annotation (e.g. openai/gpt-5)",
+    ),
 ) -> None:
     """Place images and annotate figures in existing essay."""
     run_dir = _run_dir(video_id, output_dir)
-    if not _step_place_images(video_id, run_dir, embed, force):
+    if not _step_place_images(video_id, run_dir, embed, force, model=model):
         raise typer.Exit(1)
 
 

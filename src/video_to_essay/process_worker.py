@@ -107,8 +107,9 @@ def _process_one(video: dict) -> None:
 
     kept = load_kept_frames(classifications_path, kept_dir)
     if kept:
-        with_images = place_images_in_essay(essay_text, kept, image_prefix)
-        annotated = annotate_essay(with_images)
+        with llm.run_context(place_dir):
+            with_images = place_images_in_essay(essay_text, kept, image_prefix)
+            annotated = annotate_essay(with_images)
         # Upload frames first so S3 URLs are valid
         upload_run(youtube_video_id, step_dirs=["04_frames"])
         # Rewrite relative image paths to public S3 URLs

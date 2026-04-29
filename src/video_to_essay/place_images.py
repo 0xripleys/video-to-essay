@@ -9,35 +9,13 @@ import io
 import json
 import logging
 import re
-import time
 from pathlib import Path
 
-import anthropic
 from PIL import Image
 
+from video_to_essay import llm
+
 logger = logging.getLogger(__name__)
-
-
-def _stream_message(client: anthropic.Anthropic, **kwargs: object) -> str:
-    """Create a message with streaming to handle long requests.
-
-    Includes exponential backoff retry for rate limit errors.
-    """
-    max_retries = 5
-    for attempt in range(max_retries):
-        try:
-            chunks: list[str] = []
-            with client.messages.stream(**kwargs) as stream:
-                for text in stream.text_stream:
-                    chunks.append(text)
-            return "".join(chunks)
-        except anthropic.RateLimitError:
-            if attempt == max_retries - 1:
-                raise
-            wait = 2 ** attempt * 15  # 15, 30, 60, 120s
-            logger.warning("Rate limited, waiting %ds (attempt %d/%d)...", wait, attempt + 1, max_retries)
-            time.sleep(wait)
-    return ""  # unreachable
 
 
 def load_kept_frames(
@@ -78,6 +56,7 @@ def place_images_in_essay(
     essay_text: str,
     kept_frames: list[dict[str, str | int]],
     image_prefix: str = "images/",
+    model: str | None = None,
 ) -> str:
     """Insert images into an essay at appropriate positions via LLM.
 
@@ -97,34 +76,37 @@ def place_images_in_essay(
     numbered = "\n\n".join(f"[P{i}] {p}" for i, p in enumerate(paragraphs))
 
     placement_tool = {
-        "name": "place_images",
-        "description": "Place images into the essay at appropriate positions.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "placements": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "image": {"type": "string", "description": "Image filename"},
-                            "after": {"type": "integer", "description": "Paragraph index to place image after"},
-                            "alt": {"type": "string", "description": "Short description of what the image shows"},
+        "type": "function",
+        "function": {
+            "name": "place_images",
+            "description": "Place images into the essay at appropriate positions.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "placements": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "image": {"type": "string", "description": "Image filename"},
+                                "after": {"type": "integer", "description": "Paragraph index to place image after"},
+                                "alt": {"type": "string", "description": "Short description of what the image shows"},
+                            },
+                            "required": ["image", "after", "alt"],
                         },
-                        "required": ["image", "after", "alt"],
-                    },
-                }
+                    }
+                },
+                "required": ["placements"],
             },
-            "required": ["placements"],
         },
     }
 
-    client = anthropic.Anthropic()
-    msg = client.messages.create(
-        model="claude-sonnet-4-5-20250929",
+    response = llm.complete(
+        task="place_images",
+        model=model,
         max_tokens=16384,
         tools=[placement_tool],
-        tool_choice={"type": "tool", "name": "place_images"},
+        tool_choice={"type": "function", "function": {"name": "place_images"}},
         messages=[
             {
                 "role": "user",
@@ -143,11 +125,12 @@ def place_images_in_essay(
                 ),
             }
         ],
+        num_retries=5,
     )
 
-    # Find the tool_use block in the response
-    tool_block = next(b for b in msg.content if b.type == "tool_use")
-    placements: list[dict] = tool_block.input["placements"]
+    placements: list[dict] = json.loads(
+        response.choices[0].message.tool_calls[0].function.arguments
+    )["placements"]
 
     # Group placements by paragraph index
     insert_after: dict[int, list[str]] = {}
@@ -201,6 +184,7 @@ def _number_figures(essay: str) -> tuple[str, list[tuple[int, str, str]]]:
 def annotate_essay(
     essay_text: str,
     batch_size: int = 5,
+    model: str | None = None,
 ) -> str:
     """Add figure numbers, captions, and weave figure references into prose.
 
@@ -215,8 +199,6 @@ def annotate_essay(
 
     logger.info("Numbered %d figures. Adding references via LLM in batches of %d...", len(figures), batch_size)
 
-    # Step 2: LLM returns insertion instructions as JSON
-    client = anthropic.Anthropic()
     result = numbered_essay
 
     for i in range(0, len(figures), batch_size):
@@ -227,8 +209,9 @@ def annotate_essay(
         batch_nums = ", ".join(str(num) for num, _, _ in batch)
         logger.info("  Batch: Figure %s...", batch_nums)
 
-        msg = client.messages.create(
-            model="claude-sonnet-4-5-20250929",
+        response = llm.complete(
+            task="place_images",
+            model=model,
             max_tokens=4096,
             messages=[
                 {
@@ -253,9 +236,10 @@ def annotate_essay(
                     ),
                 }
             ],
+            num_retries=5,
         )
 
-        raw = msg.content[0].text.strip()
+        raw = response.choices[0].message.content.strip()
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
 
