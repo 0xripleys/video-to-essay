@@ -12,8 +12,9 @@ import re
 import subprocess
 from pathlib import Path
 
-import anthropic
 import httpx
+
+from video_to_essay import llm
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +118,10 @@ def run_diarization(
 
 
 def map_speaker_names(
-    segments: list[dict], metadata: dict, output_dir: Path
+    segments: list[dict],
+    metadata: dict,
+    output_dir: Path,
+    model: str | None = None,
 ) -> dict[int, str]:
     """Use Claude Haiku to map speaker IDs to real names.
 
@@ -167,14 +171,15 @@ Using the video metadata and conversational context, map each speaker ID to thei
 Return ONLY a valid JSON object, no other text. Example:
 {{"0": "Tyler Neville", "1": "Quinn Thompson", "2": "Felix Jauvin"}}"""
 
-    client = anthropic.Anthropic()
-    msg = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=256,
-        messages=[{"role": "user", "content": prompt}],
-    )
+    with llm.run_context(output_dir):
+        response = llm.complete(
+            task="diarize_helper",
+            model=model,
+            max_tokens=256,
+            messages=[{"role": "user", "content": prompt}],
+        )
 
-    response_text = msg.content[0].text.strip()
+    response_text = response.choices[0].message.content.strip()
     # Extract JSON from response (in case Haiku wraps it in markdown)
     json_match = re.search(r"\{[^}]+\}", response_text, re.DOTALL)
     if json_match:
@@ -252,6 +257,7 @@ def transcribe_with_deepgram(
     output_dir: Path,
     metadata: dict,
     force: bool = False,
+    model: str | None = None,
 ) -> None:
     """Top-level orchestrator for Deepgram transcription + diarization.
 
@@ -290,7 +296,7 @@ def transcribe_with_deepgram(
     speaker_names: dict[int, str] | None = None
     if is_multi_speaker:
         logger.info("Found %d speakers, mapping names...", len(unique_speakers))
-        speaker_names = map_speaker_names(segments, metadata, output_dir)
+        speaker_names = map_speaker_names(segments, metadata, output_dir, model=model)
 
     # Step 5: Format and save transcript
     transcript_text = format_transcript(segments, speaker_names)

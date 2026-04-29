@@ -480,6 +480,10 @@ def diarize(
     cookies: str | None = typer.Option(None, "--cookies", help="Path to cookies.txt"),
     force: bool = typer.Option(False, "--force", help="Re-run diarization"),
     output_dir: Path | None = typer.Option(None, "--output-dir", "-o", help="Base output directory (default: runs/)"),
+    model: str | None = typer.Option(
+        None, "--model", "-m",
+        help="Override the model for speaker name mapping (e.g. openai/gpt-5)",
+    ),
 ) -> None:
     """Download video (if needed) and run Deepgram diarization."""
     run_dir = _run_dir(video_id, output_dir)
@@ -504,7 +508,7 @@ def diarize(
         raise typer.Exit(1)
 
     try:
-        transcribe_with_deepgram(video_files[0], transcript_dir, metadata, force)
+        transcribe_with_deepgram(video_files[0], transcript_dir, metadata, force, model=model)
     except RuntimeError as e:
         print(f"ERROR: {e}")
         raise typer.Exit(1)
