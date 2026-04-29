@@ -193,7 +193,9 @@ def _step_filter_sponsors(
         return False
 
 
-def _step_essay(video_id: str, run_dir: Path, force: bool) -> bool:
+def _step_essay(
+    video_id: str, run_dir: Path, force: bool, model: str | None = None,
+) -> bool:
     filter_dir = _step_dir(run_dir, "filter_sponsors")
     essay_dir = _step_dir(run_dir, "essay")
 
@@ -207,7 +209,10 @@ def _step_essay(video_id: str, run_dir: Path, force: bool) -> bool:
         print("ERROR: no transcript found — run filter-sponsors step first")
         return False
     try:
-        text = transcript_to_essay(transcript_path.read_text(), video_id=video_id)
+        with llm.run_context(essay_dir):
+            text = transcript_to_essay(
+                transcript_path.read_text(), video_id=video_id, model=model,
+            )
         out.write_text(text)
         print(f"Essay saved ({len(text)} chars) -> {out}")
         return True
@@ -542,10 +547,15 @@ def essay(
     video_id: str = typer.Argument(..., help="YouTube video ID (run dir must exist)"),
     force: bool = typer.Option(False, "--force", help="Overwrite existing essay"),
     output_dir: Path | None = typer.Option(None, "--output-dir", "-o", help="Base output directory (default: runs/)"),
+    model: str | None = typer.Option(
+        None, "--model", "-m",
+        help="Override the model for essay generation (e.g. openai/gpt-5). "
+             "Style profile and summarize use their MODELS defaults.",
+    ),
 ) -> None:
     """Generate essay from existing transcript."""
     run_dir = _run_dir(video_id, output_dir)
-    if not _step_essay(video_id, run_dir, force):
+    if not _step_essay(video_id, run_dir, force, model=model):
         raise typer.Exit(1)
     essay_path = _step_dir(run_dir, "essay") / "essay.md"
     summarize_essay(essay_path, force=force)

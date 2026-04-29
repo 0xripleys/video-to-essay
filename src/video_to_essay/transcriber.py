@@ -12,16 +12,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+from video_to_essay import llm
+
 logger = logging.getLogger(__name__)
-
-
-def _stream_message(client: "anthropic.Anthropic", **kwargs: object) -> str:
-    """Create a message with streaming to handle long requests."""
-    chunks: list[str] = []
-    with client.messages.stream(**kwargs) as stream:
-        for text in stream.text_stream:
-            chunks.append(text)
-    return "".join(chunks)
 
 
 def extract_video_id(url: str) -> str:
@@ -37,20 +30,17 @@ def extract_video_id(url: str) -> str:
     raise ValueError(f"Could not extract video ID from: {url}")
 
 
-def extract_style_profile(transcript: str, api_key: str | None = None) -> str:
+def extract_style_profile(transcript: str, model: str | None = None) -> str:
     """Analyze transcript to extract a compact style profile.
 
-    Sends the first ~8k chars of the transcript to Haiku and returns a
-    ~200-word profile describing formality, phrasing, humor, etc.
+    Sends the first ~8k chars of the transcript and returns a ~200-word
+    profile describing formality, phrasing, humor, etc.
     """
-    import anthropic
-
-    client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
-
     sample = transcript[:8000]
 
-    msg = client.messages.create(
-        model="claude-haiku-4-5-20251001",
+    response = llm.complete(
+        task="style_profile",
+        model=model,
         max_tokens=512,
         messages=[{
             "role": "user",
@@ -71,7 +61,7 @@ def extract_style_profile(transcript: str, api_key: str | None = None) -> str:
         }],
     )
 
-    return msg.content[0].text
+    return response.choices[0].message.content
 
 
 def _is_multi_speaker(transcript: str) -> bool:
@@ -87,22 +77,19 @@ def _extract_speakers(transcript: str) -> list[str]:
 
 
 def extract_multi_speaker_style_profile(
-    transcript: str, api_key: str | None = None
+    transcript: str, model: str | None = None,
 ) -> str:
     """Analyze multi-speaker transcript to extract per-speaker style profiles.
 
-    Sends the first ~8k chars to Haiku and returns a combined multi-speaker
-    style analysis covering each speaker's distinct voice.
+    Sends the first ~8k chars and returns a combined multi-speaker style
+    analysis covering each speaker's distinct voice.
     """
-    import anthropic
-
-    client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
-
     speakers = _extract_speakers(transcript)
     sample = transcript[:8000]
 
-    msg = client.messages.create(
-        model="claude-haiku-4-5-20251001",
+    response = llm.complete(
+        task="style_profile",
+        model=model,
         max_tokens=1024,
         messages=[{
             "role": "user",
@@ -124,7 +111,7 @@ def extract_multi_speaker_style_profile(
         }],
     )
 
-    return msg.content[0].text
+    return response.choices[0].message.content
 
 
 def _timestamp_instructions(video_id: str) -> str:
@@ -140,12 +127,13 @@ Do NOT place timestamps on their own line — they must be part of the heading."
 
 
 def _transcript_to_essay_single(
-    transcript: str, client: "anthropic.Anthropic", api_key: str | None,
+    transcript: str,
     video_id: str | None = None,
+    model: str | None = None,
 ) -> str:
     """Single-speaker essay generation (original path)."""
     logger.info("Extracting style profile from transcript...")
-    style_profile = extract_style_profile(transcript, api_key=api_key)
+    style_profile = extract_style_profile(transcript, model=None)
     logger.info("Style profile extracted. Generating essay...")
 
     system_prompt = f"""\
@@ -199,35 +187,36 @@ The company allocated substantial resources to address the challenge, and the st
 
 ---"""
 
-    result = _stream_message(
-        client,
-        model="claude-sonnet-4-5-20250929",
+    return "".join(llm.stream(
+        task="essay_single",
+        model=model,
         max_tokens=64000,
-        system=system_prompt,
-        messages=[{
-            "role": "user",
-            "content": (
-                f"{few_shot_examples}\n\n"
-                "Now convert this transcript into an essay. Preserve the speaker's "
-                "voice exactly as described in the style profile above.\n\n"
-                f"{transcript}"
-            ),
-        }],
-    )
-
-    return result
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": (
+                    f"{few_shot_examples}\n\n"
+                    "Now convert this transcript into an essay. Preserve the speaker's "
+                    "voice exactly as described in the style profile above.\n\n"
+                    f"{transcript}"
+                ),
+            },
+        ],
+    ))
 
 
 def _transcript_to_essay_multi(
-    transcript: str, client: "anthropic.Anthropic", api_key: str | None,
+    transcript: str,
     video_id: str | None = None,
+    model: str | None = None,
 ) -> str:
     """Multi-speaker essay generation (dialogue-style)."""
     speakers = _extract_speakers(transcript)
     logger.info("Multi-speaker transcript detected: %s", ", ".join(speakers))
 
     logger.info("Extracting per-speaker style profiles...")
-    style_profile = extract_multi_speaker_style_profile(transcript, api_key=api_key)
+    style_profile = extract_multi_speaker_style_profile(transcript, model=None)
     logger.info("Style profiles extracted. Generating dialogue essay...")
 
     speaker_list = "\n".join(f"- {s}" for s in speakers)
@@ -295,29 +284,31 @@ The company allocated substantial resources to address the challenge, and the st
 
 ---"""
 
-    result = _stream_message(
-        client,
-        model="claude-sonnet-4-5-20250929",
+    return "".join(llm.stream(
+        task="essay_multi",
+        model=model,
         max_tokens=64000,
-        system=system_prompt,
-        messages=[{
-            "role": "user",
-            "content": (
-                f"{few_shot_examples}\n\n"
-                "Now convert this multi-speaker transcript into a clean dialogue. "
-                "Preserve each speaker's distinct voice as described in the profiles above.\n\n"
-                f"{transcript}"
-            ),
-        }],
-    )
-
-    return result
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": (
+                    f"{few_shot_examples}\n\n"
+                    "Now convert this multi-speaker transcript into a clean dialogue. "
+                    "Preserve each speaker's distinct voice as described in the profiles above.\n\n"
+                    f"{transcript}"
+                ),
+            },
+        ],
+    ))
 
 
 def transcript_to_essay(
-    transcript: str, api_key: str | None = None, video_id: str | None = None,
+    transcript: str,
+    video_id: str | None = None,
+    model: str | None = None,
 ) -> str:
-    """Convert a transcript to an essay using Claude API.
+    """Convert a transcript to an essay.
 
     Detects single vs multi-speaker transcripts and uses the appropriate
     generation strategy. Multi-speaker transcripts (with **Speaker Name**
@@ -326,13 +317,9 @@ def transcript_to_essay(
 
     If video_id is provided, timestamps in the essay link to the YouTube video.
     """
-    import anthropic
-
-    client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
-
     if _is_multi_speaker(transcript):
-        return _transcript_to_essay_multi(transcript, client, api_key, video_id)
-    return _transcript_to_essay_single(transcript, client, api_key, video_id)
+        return _transcript_to_essay_multi(transcript, video_id, model=model)
+    return _transcript_to_essay_single(transcript, video_id, model=model)
 
 
 def fetch_video_metadata(
