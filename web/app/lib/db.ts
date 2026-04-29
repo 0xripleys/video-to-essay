@@ -115,6 +115,56 @@ export async function getVideo(videoId: string): Promise<Video | null> {
   return rows[0] ?? null;
 }
 
+export async function getVideoByYoutubeId(
+  youtubeVideoId: string,
+): Promise<(Video & { channel_name: string | null }) | null> {
+  const { rows } = await pool.query(
+    `SELECT v.*, c.name as channel_name
+     FROM videos v
+     LEFT JOIN channels c ON c.id = v.channel_id
+     WHERE v.youtube_video_id = $1`,
+    [youtubeVideoId],
+  );
+  return rows[0] ?? null;
+}
+
+export type VideoStatus = "done" | "failed" | "processing" | "pending_download";
+
+export function videoStatus(v: Pick<Video, "error" | "processed_at" | "downloaded_at">): VideoStatus {
+  if (v.error) return "failed";
+  if (v.processed_at) return "done";
+  if (v.downloaded_at) return "processing";
+  return "pending_download";
+}
+
+/** Admin: list all videos (no user filter), most recent first. */
+export async function listAllVideos(opts: {
+  status?: VideoStatus | "all";
+  limit?: number;
+  offset?: number;
+} = {}): Promise<(Video & { channel_name: string | null })[]> {
+  const { status = "all", limit = 50, offset = 0 } = opts;
+
+  const filters: string[] = [];
+  if (status === "done") filters.push("v.processed_at IS NOT NULL AND v.error IS NULL");
+  else if (status === "failed") filters.push("v.error IS NOT NULL");
+  else if (status === "processing") filters.push("v.downloaded_at IS NOT NULL AND v.processed_at IS NULL AND v.error IS NULL");
+  else if (status === "pending_download") filters.push("v.downloaded_at IS NULL AND v.error IS NULL");
+
+  const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
+
+  const { rows } = await pool.query(
+    `SELECT v.*, c.name as channel_name
+     FROM videos v
+     LEFT JOIN channels c ON c.id = v.channel_id
+     ${where}
+     ORDER BY v.created_at DESC
+     LIMIT $1 OFFSET $2`,
+    [limit, offset],
+  );
+  return rows;
+}
+
 export async function listUserVideos(
   userId: string,
 ): Promise<(Video & { channel_name?: string; source?: string; delivery_sent_at?: string })[]> {

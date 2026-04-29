@@ -5,6 +5,7 @@ import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { apiJson } from "../lib/api";
+import { markdownToHtml } from "../lib/markdown";
 
 interface VideoDetail {
   id: string;
@@ -121,46 +122,3 @@ export default function ReaderPage() {
   );
 }
 
-/** Simple markdown to HTML — handles the essay output format. */
-function markdownToHtml(md: string): string {
-  return md
-    // Images (base64 embedded or relative)
-    .replace(
-      /!\[([^\]]*)\]\(([^)]+)\)/g,
-      '<img src="$2" alt="$1" class="rounded-lg my-4 max-w-full" />',
-    )
-    // Links (but not images — already handled above)
-    .replace(
-      /\[([^\]]+)\]\(([^)]+)\)/g,
-      '<a href="$2" class="text-stone-500 hover:text-stone-700 underline" target="_blank" rel="noopener noreferrer">$1</a>',
-    )
-    // Bold
-    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    // Italic (but not inside image tags)
-    .replace(/(?<!\w)\*(.+?)\*(?!\w)/g, "<em>$1</em>")
-    // H3
-    .replace(
-      /^### (.+)$/gm,
-      '<h3 class="text-lg font-bold mt-8 mb-2 font-sans text-stone-900">$1</h3>',
-    )
-    // H2
-    .replace(
-      /^## (.+)$/gm,
-      '<h2 class="text-xl font-bold mt-10 mb-3 font-sans text-stone-900">$1</h2>',
-    )
-    // H1
-    .replace(
-      /^# (.+)$/gm,
-      '<h1 class="text-2xl font-bold mt-10 mb-4 font-sans text-stone-900">$1</h1>',
-    )
-    // Paragraphs
-    .split("\n\n")
-    .map((block) => {
-      const trimmed = block.trim();
-      if (!trimmed) return "";
-      // Don't wrap headings or images in <p>
-      if (trimmed.startsWith("<h") || trimmed.startsWith("<img")) return trimmed;
-      return `<p class="mb-4">${trimmed}</p>`;
-    })
-    .join("\n");
-}
