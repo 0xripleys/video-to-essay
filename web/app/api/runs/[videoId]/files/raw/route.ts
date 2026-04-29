@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCurrentUser } from "@/app/lib/auth";
+import { requireAdminRoute } from "@/app/lib/admin";
 import { streamRunArtifact } from "@/app/lib/s3";
-
-const ADMIN_EMAIL = "neerajen.sritharan@gmail.com";
 
 const CONTENT_TYPE_BY_EXT: Record<string, string> = {
   jpg: "image/jpeg",
@@ -24,20 +22,11 @@ function inferContentType(path: string): string {
   return CONTENT_TYPE_BY_EXT[ext] ?? "application/octet-stream";
 }
 
-async function requireAdmin(): Promise<NextResponse | null> {
-  if (process.env.NODE_ENV !== "production") return null;
-  const user = await getCurrentUser();
-  if (user?.email !== ADMIN_EMAIL) {
-    return NextResponse.json({ detail: "Not found" }, { status: 404 });
-  }
-  return null;
-}
-
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ videoId: string }> },
 ) {
-  const denied = await requireAdmin();
+  const denied = await requireAdminRoute();
   if (denied) return denied;
 
   const { videoId } = await params;

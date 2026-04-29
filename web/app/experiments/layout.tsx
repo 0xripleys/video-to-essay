@@ -1,6 +1,6 @@
 import { requireAdminPage } from "@/app/lib/admin";
 
-export default async function RunsLayout({
+export default async function ExperimentsLayout({
   children,
 }: {
   children: React.ReactNode;

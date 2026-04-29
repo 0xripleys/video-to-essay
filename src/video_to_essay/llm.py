@@ -57,8 +57,10 @@ def complete(
 ) -> ModelResponse:
     """Non-streaming LLM call. Returns the full litellm ModelResponse."""
     resolved = model or MODELS[task]
+    t0 = time.monotonic()
     response = litellm.completion(model=resolved, messages=messages, **kwargs)
-    _persist(task, resolved, messages, kwargs, response)
+    wall_ms = int((time.monotonic() - t0) * 1000)
+    _persist(task, resolved, messages, kwargs, response, wall_ms=wall_ms)
     return response
 
 
@@ -76,6 +78,7 @@ def stream(
     after the stream drains.
     """
     resolved = model or MODELS[task]
+    t0 = time.monotonic()
     response = litellm.completion(
         model=resolved, messages=messages, stream=True, **kwargs
     )
@@ -85,9 +88,22 @@ def stream(
         delta = chunk.choices[0].delta.content
         if delta:
             yield delta
+    wall_ms = int((time.monotonic() - t0) * 1000)
     assembled = litellm.stream_chunk_builder(chunks, messages=messages)
     if assembled is not None:
-        _persist(task, resolved, messages, kwargs, assembled)
+        _persist(task, resolved, messages, kwargs, assembled, wall_ms=wall_ms)
+
+
+def _safe_completion_cost(response: ModelResponse) -> float | None:
+    """Best-effort wrapper around litellm.completion_cost.
+
+    Returns None for self-hosted models, models with stale pricing data,
+    or any other case where litellm cannot price the call.
+    """
+    try:
+        return litellm.completion_cost(completion_response=response)
+    except Exception:
+        return None
 
 
 def _persist(
@@ -96,6 +112,8 @@ def _persist(
     messages: list[dict[str, Any]],
     kwargs: dict[str, Any],
     response: ModelResponse,
+    *,
+    wall_ms: int | None = None,
 ) -> None:
     step_dir = _step_dir.get()
     if step_dir is None:
@@ -112,6 +130,8 @@ def _persist(
         "task": task,
         "model": resolved_model,
         "timestamp_ms": timestamp_ms,
+        "wall_ms": wall_ms,
+        "cost_usd": _safe_completion_cost(response),
         "request_id": _extract_request_id(response),
         "input_tokens": getattr(usage, "prompt_tokens", None) if usage else None,
         "output_tokens": (

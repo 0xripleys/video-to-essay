@@ -674,6 +674,150 @@ def score_dimension_cmd(
         print(f"Result written to {path}")
 
 
+EXPERIMENTS_YAML = Path("experiments.yaml")
+
+
+@app.command()
+def experiment(
+    step: str = typer.Argument(
+        ..., help="One of: essay, place_images, summarize, sponsor_filter, "
+                  "frame_classify, diarize, score, all",
+    ),
+    videos: str = typer.Option(
+        ..., "--videos",
+        help="Comma-separated YouTube video IDs (must exist in runs/ or S3)",
+    ),
+    models: str | None = typer.Option(
+        None, "--models",
+        help="Comma-separated litellm model strings (single-step only)",
+    ),
+    configs: str | None = typer.Option(
+        None, "--configs",
+        help="Comma-separated config names from experiments.yaml (--step all only)",
+    ),
+    label: str | None = typer.Option(
+        None, "--label", help="Human-readable label appended to exp_id",
+    ),
+    concurrency: int = typer.Option(
+        4, "--concurrency", help="Parallel cells (default: 4)",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print sweep plan + cost estimate, then exit",
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", help="Skip the interactive confirm prompt",
+    ),
+    output_base: Path = typer.Option(
+        Path("experiments"), "--output-base",
+        help="Local mirror dir for variant files",
+    ),
+    no_upload: bool = typer.Option(
+        False, "--no-upload", help="Skip S3 upload (local-only)",
+    ),
+    runs_base: Path = typer.Option(
+        Path("runs"), "--runs-base",
+        help="Local runs dir to source canonical inputs from",
+    ),
+    configs_path: Path = typer.Option(
+        EXPERIMENTS_YAML, "--configs-file",
+        help="Path to experiments.yaml",
+    ),
+) -> None:
+    """A/B test models per pipeline step on cached production runs."""
+    from . import experiment as harness
+
+    if step not in harness.ALL_STEPS:
+        typer.echo(f"ERROR: unknown step '{step}'. Choose from: {', '.join(sorted(harness.ALL_STEPS))}")
+        raise typer.Exit(2)
+
+    video_ids = [v.strip() for v in videos.split(",") if v.strip()]
+    if not video_ids:
+        typer.echo("ERROR: --videos must list at least one video ID")
+        raise typer.Exit(2)
+    model_list = [m.strip() for m in models.split(",")] if models else None
+    config_names = [c.strip() for c in configs.split(",")] if configs else None
+
+    loaded_configs = None
+    if step == "all" or configs_path.exists():
+        try:
+            loaded_configs = harness.load_configs(configs_path)
+        except FileNotFoundError:
+            if step == "all":
+                typer.echo(f"ERROR: {configs_path} not found")
+                raise typer.Exit(2)
+
+    try:
+        plan = harness.build_sweep(
+            step=step,
+            videos=video_ids,
+            models=model_list,
+            config_names=config_names,
+            label=label,
+            configs=loaded_configs,
+        )
+    except ValueError as e:
+        typer.echo(f"ERROR: {e}")
+        raise typer.Exit(2)
+
+    typer.echo("Sweep plan:")
+    typer.echo(f"  exp_id: {plan.exp_id}")
+    typer.echo(f"  step:   {plan.step}")
+    typer.echo(f"  videos: {', '.join(plan.videos)}")
+    typer.echo(f"  variants: {', '.join(plan.variants)}")
+    typer.echo(f"  cells:  {len(plan.cells)} (concurrency={concurrency})")
+
+    summary = harness.dry_run_summary(plan, runs_base=runs_base)
+    low = summary["estimated_total_low_usd"]
+    high = summary["estimated_total_high_usd"]
+    if low is not None and high is not None:
+        typer.echo(f"  estimated cost: ${low:.2f} – ${high:.2f}")
+    else:
+        typer.echo("  estimated cost: unknown (no canonical token data or pricing)")
+
+    if dry_run:
+        typer.echo("(dry-run — exiting)")
+        return
+
+    # Verify input availability before any LLM call
+    errors = harness.verify_video_inputs(plan.videos, plan.step, runs_base=runs_base)
+    if errors:
+        typer.echo("ERROR: missing inputs:")
+        for err in errors:
+            typer.echo(f"  - {err}")
+        raise typer.Exit(2)
+
+    if not yes:
+        if not typer.confirm("Proceed?", default=False):
+            typer.echo("Aborted.")
+            raise typer.Exit(0)
+
+    def _on_progress(i: int, total: int, result: harness.CellResult) -> None:
+        cost = f"${result.cost_usd:.4f}" if result.cost_usd is not None else "?"
+        wall = f"{result.wall_ms / 1000:.1f}s"
+        score = f"score {result.score_overall}" if result.score_overall is not None else ""
+        typer.echo(
+            f"[{i}/{total}] {result.plan.video_id} / {result.plan.variant}  "
+            f"{result.status:<10}  {wall:<6}  {cost:<8}  {score}"
+        )
+
+    manifest = harness.run_sweep(
+        plan,
+        concurrency=concurrency,
+        runs_base=runs_base,
+        output_base=output_base,
+        upload=not no_upload,
+        progress_cb=_on_progress,
+    )
+    typer.echo(
+        f"\nSweep complete: {manifest['ok_count']}/{len(plan.cells)} ok, "
+        f"{manifest['fail_count']} failed"
+    )
+    typer.echo(f"exp_id: {plan.exp_id}")
+    typer.echo(f"Local: {output_base / plan.exp_id}")
+    if not no_upload:
+        typer.echo(f"View:  http://localhost:3000/experiments/{plan.exp_id}")
+
+
 @app.command()
 def serve(
     no_workers: bool = typer.Option(False, "--no-workers", help="Disable background workers"),

@@ -90,6 +90,7 @@ def test_persist_writes_json_when_context_set(tmp_path: Path) -> None:
             messages=[{"role": "user", "content": "hi"}],
             kwargs={"max_tokens": 100},
             response=response,
+            wall_ms=1234,
         )
 
     files = list((tmp_path / "llm_calls").glob("summarize_*.json"))
@@ -101,7 +102,29 @@ def test_persist_writes_json_when_context_set(tmp_path: Path) -> None:
     assert payload["request_id"] == "req_abc123"
     assert payload["input_tokens"] == 100
     assert payload["output_tokens"] == 50
+    assert payload["wall_ms"] == 1234
+    assert "cost_usd" in payload  # may be None if litellm can't price the mock
     assert payload["kwargs"] == {"max_tokens": 100}
+
+
+def test_safe_completion_cost_returns_none_on_error() -> None:
+    response = _make_mock_response()
+    with patch.object(llm.litellm, "completion_cost", side_effect=RuntimeError("nope")):
+        assert llm._safe_completion_cost(response) is None
+
+
+def test_complete_records_wall_ms(tmp_path: Path) -> None:
+    with patch.object(llm.litellm, "completion") as mock_completion, \
+         patch.object(llm.litellm, "completion_cost", return_value=0.0042):
+        mock_completion.return_value = _make_mock_response()
+        with llm.run_context(tmp_path):
+            llm.complete(task="summarize", messages=[{"role": "user", "content": "hi"}])
+
+    files = list((tmp_path / "llm_calls").glob("summarize_*.json"))
+    payload = json.loads(files[0].read_text())
+    assert isinstance(payload["wall_ms"], int)
+    assert payload["wall_ms"] >= 0
+    assert payload["cost_usd"] == 0.0042
 
 
 def test_persist_noop_when_context_unset(tmp_path: Path) -> None:

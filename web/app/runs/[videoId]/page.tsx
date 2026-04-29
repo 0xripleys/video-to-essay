@@ -4,6 +4,7 @@ import {
   getRunArtifacts,
   listRunFiles,
 } from "@/app/lib/s3";
+import { listExpIds, listManifests } from "@/app/lib/experiments";
 import RunDetail from "./RunDetail";
 
 const ARTIFACT_PATHS = [
@@ -41,10 +42,16 @@ export default async function RunDetailPage({
     );
   }
 
-  const [artifacts, files] = await Promise.all([
+  const [artifacts, files, expIds] = await Promise.all([
     getRunArtifacts(videoId, ARTIFACT_PATHS),
     listRunFiles(videoId),
+    listExpIds(),
   ]);
+
+  const allManifests = await listManifests(expIds);
+  const matchingExperiments = allManifests.filter((m) =>
+    m.videos.includes(videoId),
+  );
 
   const keptFrames = files
     .filter((f) => f.relativePath.startsWith("04_frames/kept/") && f.relativePath.endsWith(".jpg"))
@@ -54,23 +61,49 @@ export default async function RunDetailPage({
   const status = videoStatus(video);
 
   return (
-    <RunDetail
-      video={{
-        id: video.id,
-        youtube_video_id: video.youtube_video_id,
-        youtube_url: video.youtube_url,
-        video_title: video.video_title,
-        channel_name: video.channel_name,
-        status,
-        error: video.error,
-        created_at: video.created_at,
-      }}
-      artifacts={artifacts}
-      files={files.map((f) => ({
-        relativePath: f.relativePath,
-        size: f.size,
-      }))}
-      keptFrames={keptFrames}
-    />
+    <>
+      {matchingExperiments.length > 0 ? (
+        <div className="mx-auto max-w-6xl px-6 pt-6">
+          <div className="rounded-lg border border-stone-200 bg-stone-50 px-4 py-3 text-sm">
+            <div className="text-xs font-medium uppercase tracking-wide text-stone-500">
+              Appears in experiments
+            </div>
+            <ul className="mt-2 space-y-1">
+              {matchingExperiments.map((m) => (
+                <li key={m.exp_id}>
+                  <Link
+                    href={`/experiments/${m.exp_id}/${videoId}`}
+                    className="font-mono text-xs text-stone-700 hover:underline"
+                  >
+                    {m.exp_id}
+                  </Link>
+                  <span className="ml-2 text-xs text-stone-500">
+                    {m.step} · {m.variants.join(", ")}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      ) : null}
+      <RunDetail
+        video={{
+          id: video.id,
+          youtube_video_id: video.youtube_video_id,
+          youtube_url: video.youtube_url,
+          video_title: video.video_title,
+          channel_name: video.channel_name,
+          status,
+          error: video.error,
+          created_at: video.created_at,
+        }}
+        artifacts={artifacts}
+        files={files.map((f) => ({
+          relativePath: f.relativePath,
+          size: f.size,
+        }))}
+        keptFrames={keptFrames}
+      />
+    </>
   );
 }

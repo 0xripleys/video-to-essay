@@ -37,9 +37,8 @@ runs/<video_id>/                         ← canonical, unchanged
   05_place_images/essay_final.md
 
 experiments/
-  index.json                             ← append-only sweep index (cheap list view)
   <exp_id>/
-    manifest.json                        ← config + per-cell summary
+    manifest.json                        ← config + per-cell summary (single source of truth)
     <video_id>/
       <step>/                            ← e.g. 03_essay or "full"
         <slug>/                          ← model_slug or config name
@@ -220,7 +219,7 @@ def run_cell(exp_id, video_id, step, model_or_config, work_dir):
     return cell_summary
 ```
 
-**Concurrency.** `concurrent.futures.ThreadPoolExecutor` with `max_workers=4` default. LiteLLM is thread-safe; `llm.run_context` uses `ContextVar`s which propagate per-thread (each cell sets its own `run_context` inside its worker function — no shared state). Configurable via `--concurrency`. Default is conservative because Anthropic rate limits hit fast on parallel essays.
+**Concurrency.** `concurrent.futures.ThreadPoolExecutor` with `max_workers=4` default. LiteLLM is thread-safe; `llm.run_context` uses `ContextVar`s, which `ThreadPoolExecutor` workers do *not* inherit by default. Each cell's worker function therefore opens its own `llm.run_context(variant_dir)` (matching the pattern in `scorer.py`, where `step_dir` is captured on the calling thread and passed explicitly into each worker). No shared state across cells. Configurable via `--concurrency`. Default is conservative because Anthropic rate limits hit fast on parallel essays.
 
 **Failure handling.** One cell's failure does not abort the sweep. Exception is captured, `meta.json` records `status: "failed: <repr>"`, manifest gets `cell.status: "failed"`. The CLI prints a final summary with the count and which cells failed. The variant directory is still uploaded (with whatever partial output exists, or empty) so the viewer can show the failure inline.
 
@@ -228,7 +227,7 @@ def run_cell(exp_id, video_id, step, model_or_config, work_dir):
 
 | Step | Inputs read from `runs/<video_id>/` |
 |---|---|
-| `essay` | `01_transcript/transcript.txt`, `02_filter_sponsors/sponsor_segments.json`, `03_essay/style_profile.json` (if multi-speaker) |
+| `essay` | `01_transcript/transcript.txt`, `02_filter_sponsors/sponsor_segments.json`. For multi-speaker transcripts the style profile is recomputed in-memory inside `transcript_to_essay` — it is not persisted to disk in the canonical run, so the harness inherits the same behavior. |
 | `place_images` | `03_essay/essay.md`, `04_frames/classifications.json`, `04_frames/kept/*.jpg` |
 | `score` | `01_transcript/transcript.txt`, `05_place_images/essay_final.md` |
 | `summarize` | `03_essay/essay.md` |
@@ -239,7 +238,7 @@ def run_cell(exp_id, video_id, step, model_or_config, work_dir):
 
 Pulled from S3 via existing `s3.py` helpers. Cached per-`(video_id, exp_id)` so multi-cell sweeps don't redownload.
 
-**Step output redirection.** Domain step functions need to accept a `run_dir: Path` parameter so they can write outputs to the variant dir instead of the canonical `runs/<video_id>/<step>/`. Most are partway there from the litellm migration's per-module changes; this is a small extension to formalize the parameter. Files touched: `transcriber.py`, `place_images.py`, `extract_frames.py`, `filter_sponsors.py`, `diarize.py`, `summarize.py`, `scorer.py`.
+**Step output redirection.** Most domain entry points (`transcript_to_essay`, `place_images_in_essay`, `annotate_essay`, `filter_sponsors`, `summarize_essay`, `score_essay`) already return strings or dicts and let the caller decide where to write — the harness simply writes those return values into the variant tree itself, no module change required. The two exceptions are `extract_frames.extract_and_classify` and `diarize.map_speaker_names`, which write artifacts (kept frames, classifications JSON, diarization JSON) to disk directly; both already accept an `output_dir: Path` parameter, so the harness just passes the variant dir there. No domain-module signatures need to change for v1.
 
 **Full-pipeline orchestrator.** `run_full_pipeline` chains step outputs:
 
@@ -305,29 +304,13 @@ Two surfaces in the existing Next.js app: a new top-level `/experiments` route a
 
 ### `/experiments` (list view)
 
-Server component. Reads `experiments/index.json` (an append-only file the harness updates at the end of each sweep) and renders a table.
+Server component. On each page load:
 
-**`index.json` schema:**
+1. `ListObjectsV2` with `Prefix=experiments/` and `Delimiter=/` returns the set of `<exp_id>` directory names — one S3 round trip, no pagination at expected sizes (one operator, single-digit experiments per week, ~250 after a year, well under the 1000-entry single-call limit).
+2. Parallel `GetObject` for each `<exp_id>/manifest.json` — small files (~1–5 KB each), Promise.all from the server component.
+3. Render the table.
 
-```json
-{
-  "experiments": [
-    {
-      "exp_id": "20260429-153022-essay-a3f9",
-      "when": "2026-04-29T15:30:22Z",
-      "step": "essay",
-      "label": null,
-      "videos": ["abc123", "def456", "ghi789"],
-      "candidates": ["anthropic/claude-sonnet-4-5-20250929", "openai/gpt-5"],
-      "cells_total": 6,
-      "cells_ok": 5,
-      "cells_failed": 1
-    }
-  ]
-}
-```
-
-The harness performs a read-modify-write on this file at sweep completion. Concurrent sweeps from the same operator are vanishingly rare; if it ever matters, switch to per-experiment files + a one-time aggregator.
+Manifest is the single source of truth — no denormalized index file. If list-view latency ever becomes noticeable (it shouldn't at this scale), wrap the read function in Next.js `cache()` for in-process memoization rather than introducing a new on-disk artifact.
 
 ```
 Experiments
@@ -369,7 +352,7 @@ For full-pipeline experiments, a step selector at top (`02_filter_sponsors | 03_
 
 ### Cross-link from `/runs/<videoId>`
 
-Small sidebar populated server-side from `experiments/index.json`:
+Small sidebar populated server-side from the same ListObjectsV2 + parallel manifest reads as the `/experiments` list view, then filtered to manifests whose `videos` array contains the current `videoId`. Reuses the same fetch helper; no new infrastructure. Lazy: if no manifests match, the sidebar isn't rendered.
 
 ```
 Appears in experiments
@@ -417,13 +400,7 @@ Tests use a `tmp_path` fixture YAML for `experiments.yaml`; no CI dependency on 
 
 ## Sequencing
 
-This work is gated on the litellm migration in `2026-04-29-litellm-integration-design.md`. Phase 0 (the wrapper) is already complete.
-
-- **Earliest start:** after Phase 1 (`summarize.py` migrated) — enough to scaffold `experiment.py` and dry-run plumbing.
-- **First useful experiment:** after Phase 6 (`transcriber.py` migrated) — single-step `--step essay` works.
-- **Full-pipeline (`--step all`):** requires Phases 1–7 (all LLM-step modules migrated). Phase 8 cleanup is not blocking.
-
-Recommended approach: start the harness scaffolding after Phase 1, ship single-step experiments after Phase 6, ship full-pipeline after Phase 7.
+All phases of the litellm migration in `2026-04-29-litellm-integration-design.md` are complete (through commit `1004e5c`, "Phase 8: Drop anthropic direct dep"). The harness work is fully unblocked — single-step and full-pipeline experiments can both be implemented in one pass.
 
 ## File touchlist
 
@@ -432,13 +409,6 @@ Recommended approach: start the harness scaffolding after Phase 1, ship single-s
 | `src/video_to_essay/experiment.py` | new (~400 lines) |
 | `src/video_to_essay/llm.py` | extend `_persist` with `cost_usd`, `wall_ms` |
 | `src/video_to_essay/main.py` | add `experiment` Typer command |
-| `src/video_to_essay/transcriber.py` | accept `run_dir: Path` |
-| `src/video_to_essay/place_images.py` | accept `run_dir: Path` |
-| `src/video_to_essay/extract_frames.py` | accept `run_dir: Path` |
-| `src/video_to_essay/filter_sponsors.py` | accept `run_dir: Path` |
-| `src/video_to_essay/diarize.py` | accept `run_dir: Path` |
-| `src/video_to_essay/summarize.py` | accept `run_dir: Path` |
-| `src/video_to_essay/scorer.py` | accept `run_dir: Path` |
 | `experiments.yaml` | new at repo root, committed (with `baseline: {}` and example configs) |
 | `web/app/experiments/...` | new (per Viewer Extensions section) |
 | `web/app/runs/[videoId]/page.tsx` | add "Appears in experiments" sidebar |
@@ -458,9 +428,30 @@ Recommended approach: start the harness scaffolding after Phase 1, ship single-s
 - **Curated benchmark corpus** committed to the repo
 - **Harness for the `score` task itself** (calibrating the judge model — would need a separate ground-truth dataset)
 
+## Validation TODO
+
+- [x] Single-step (`--step essay`) sweep against `adfezGXZMTQ`: Sonnet 4.5 vs Kimi K2 0905 — both cells succeeded, viewer renders aggregate table, per-dimension scores, side-by-side panels with score breakdown + meta + llm_calls accordions.
+- [ ] **Full-pipeline (`--step all`) sweep end-to-end** — exercises `_run_full_pipeline` (sponsor_filter → essay → frame_classify → place_images), the `experiments.yaml` config-resolution path, and the `/experiments/<expId>/<videoId>?step=…` step-selector in the viewer. Suggested run:
+  ```bash
+  # In experiments.yaml, add a partial config that swaps text tasks only and
+  # leaves vision tasks (frame_classify, place_images) on the canonical defaults.
+  configs:
+    kimi-essays-only:
+      essay_single: openrouter/moonshotai/kimi-k2-0905
+      essay_multi:  openrouter/moonshotai/kimi-k2-0905
+      sponsor_filter: openrouter/moonshotai/kimi-k2-0905
+      summarize:    openrouter/moonshotai/kimi-k2-0905
+  # Then:
+  video-to-essay experiment all --videos adfezGXZMTQ \
+      --configs baseline,kimi-essays-only --no-upload --yes
+  ```
+  Verify: per-cell `steps/02_filter_sponsors/`, `steps/03_essay/`, `steps/04_frames/`, `steps/05_place_images/` all populate; the viewer's step selector flips between them; `meta.json` includes the `per_step` cost/wall breakdown described in the schema above.
+- [ ] **S3 upload path** — every smoke test so far has used `--no-upload`. Drop the flag once and confirm `experiments/<exp_id>/...` lands in the bucket and the viewer fetches via S3 (not local fallback).
+- [ ] **Re-run scorer with a different judge model** (`--step score`) to demonstrate the calibration use case for the judge itself — orthogonal to the candidate sweeps.
+
 ## Open risks
 
 - **Pricing data lag.** `litellm.completion_cost` is accurate for major providers but lags by hours/days for newly released models. v1 surfaces `cost_usd: null` rather than guessing — operator notices the gap and reruns or backfills after a `litellm` bump.
 - **Scorer judgments are noisy on stochastic outputs.** A score difference of 0.3 between two models is within noise; differences > 1.0 are signal. The viewer's color-coding reflects this (red below best - 1.0). Two videos per sweep is borderline; 3+ is recommended for any meaningful comparison.
 - **Anthropic rate limits** on parallel essay generation. Default `--concurrency=4` is conservative; sweeps of size > 10 may need `--concurrency=2` to avoid `RateLimitError`. The `num_retries=5` already configured at call sites should absorb most transient hits.
-- **Step output redirection requires touching seven domain modules** (`transcriber`, `place_images`, `extract_frames`, `filter_sponsors`, `diarize`, `summarize`, `scorer`) to formalize a `run_dir: Path` parameter. The litellm migration plan partially anticipates this via `llm.run_context(<step_dir>)` wrapping at each step's entry point, but doesn't redirect output writes. The harness work lands the output redirection as a single sweep PR before the orchestrator. Risk is low (the parameter is additive with a default of the canonical path) but it does mean a touchlist that spans modules already churned by the litellm migration — sequence it after Phase 8 cleanup to avoid merge conflicts.
+- **Domain modules largely don't need changes.** Most entry points already return strings/dicts and let the caller pick a destination, and the two that write artifacts directly (`extract_frames.extract_and_classify`, `diarize.map_speaker_names`) already accept `output_dir: Path`. The orchestrator can write into the variant tree itself, so this risk has narrowed to "make sure the variant dir is threaded through to the two write-to-disk callers" — a one-line concern, not a multi-module sweep.
