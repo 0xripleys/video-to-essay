@@ -47,12 +47,16 @@ Logs are written to `logs/` (`discover.log`, `download.log`, `process.log`, `del
 ### Tests
 
 ```bash
-uv run pytest tests/ -x --ignore=tests/test_smoke.py   # Pure tests (~1s)
-uv run pytest tests/test_smoke.py -x -k "not nextjs"   # Smoke tests (import + lint)
-uv run pytest tests/ -x -v                              # Everything
+uv run pytest tests/ -x --ignore=tests/test_smoke.py --ignore=tests/db/   # Pure tests (~1s, no infra)
+uv run pytest tests/db/ -x                                                # DB tests (requires Docker)
+uv run pytest tests/test_smoke.py -x -k "not nextjs"                      # Smoke tests (import + lint)
+uv run pytest tests/ -x -v                                                # Everything
+uv run ruff check                                                         # Lint
 ```
 
-CI runs on push/PR via GitHub Actions (`.github/workflows/ci.yml`).
+DB tests use Testcontainers to spin up a throwaway Postgres 16 container per session. On macOS, `tests/db/conftest.py` auto-detects Docker Desktop's non-standard socket at `~/.docker/run/docker.sock` — DB tests will silently fail if Docker isn't running.
+
+CI runs three jobs on push/PR via GitHub Actions (`.github/workflows/ci.yml`): `test-python` (pure + smoke), `test-database` (Testcontainers Postgres), and `test-web` (Next.js build). A fourth job merges coverage from the Python jobs.
 
 For integration testing, verify changes manually by running against a real YouTube URL.
 
@@ -99,6 +103,8 @@ Each step is idempotent (skips if output exists unless `--force`). Each step rea
 - **`place_images.py`** — Sonnet places images + annotates figures (JSON-based approach)
 - **`scorer.py`** — LLM-as-judge essay quality evaluation (5 dimensions, parallel API calls)
 - **`email_sender.py`** — AgentMail integration, markdown → HTML email
+- **`s3.py`** — S3 upload helpers for run artifacts (frames, essays)
+- **`analytics.py`** — PostHog event tracking (server-side)
 
 ### Web app (`web/`)
 
@@ -111,7 +117,7 @@ Each step is idempotent (skips if output exists unless `--force`). Each step rea
 
 - **Database** — Supabase Postgres, shared between web app (TypeScript `pg`) and workers (Python `psycopg`). Both sides have their own query functions.
 - **Auth** — WorkOS. Dev mode: if `WORKOS_API_KEY` is unset, auto-creates a `dev@localhost` user.
-- **Claude models** — Sonnet (`claude-sonnet-4-5-20250929`) in `transcriber.py`, `place_images.py`, `scorer.py`, `summarize.py`. Haiku (`claude-haiku-4-5-20251001`) in `extract_frames.py`, `filter_sponsors.py`, `diarize.py`, `transcriber.py` (style profiles). Update all seven files if changing models.
+- **LLM calls** — All routed through `src/video_to_essay/llm.py`, a thin wrapper around LiteLLM. Per-task model defaults live in the `MODELS` dict at the top of `llm.py` — edit it there to swap models permanently. For ad-hoc experimentation, pass `--model <litellm-string>` to any single-step CLI subcommand (`essay`, `score`, `place-images`, `extract-frames`, `filter-sponsors`, `diarize`, `score-dimension`). Every call is persisted as JSON to `<step_dir>/llm_calls/` for debugging — base64 image bytes are stripped to sha256+size references to avoid duplicating frames already on S3.
 - **Deepgram** — `DEEPGRAM_API_KEY` required for transcription. Nova-3 with diarization.
 - **YouTube** — yt-dlp with `--remote-components ejs:github` for JS challenges. Cloud IPs need `--cookies`. Requires `ffmpeg` and `deno` on PATH.
 - **Email** — AgentMail API. Essays sent as HTML (inline-styled, sans-serif, 700px max-width) with plaintext fallback (80-char wrapped). Subject: `{Channel Name}: {Video Title}`.
