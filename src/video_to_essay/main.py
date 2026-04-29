@@ -323,7 +323,10 @@ def _step_place_images(
 
 
 def _step_score(
-    video_id: str, run_dir: Path, model: str, score_dir: Path | None = None,
+    video_id: str,
+    run_dir: Path,
+    model: str | None,
+    score_dir: Path | None = None,
 ) -> bool:
     filter_dir = _step_dir(run_dir, "filter_sponsors")
     essay_dir = _step_dir(run_dir, "essay")
@@ -339,11 +342,12 @@ def _step_score(
         return False
 
     try:
-        result = score_essay(
-            transcript=transcript_path.read_text(),
-            essay=essay_path.read_text(),
-            model=model,
-        )
+        with llm.run_context(essay_dir):
+            result = score_essay(
+                transcript=transcript_path.read_text(),
+                essay=essay_path.read_text(),
+                model=model,
+            )
         _print_score_summary(result)
         if score_dir:
             _write_score_results(result, score_dir)
@@ -592,7 +596,10 @@ def place_images_cmd(
 @app.command()
 def score(
     video_id: str = typer.Argument(..., help="YouTube video ID (run dir must exist)"),
-    model: str = typer.Option("claude-sonnet-4-5-20250929", "--model", "-m", help="Model to use for judging"),
+    model: str | None = typer.Option(
+        None, "--model", "-m",
+        help="LiteLLM model string for judging (e.g. anthropic/claude-sonnet-4-5-20250929, openai/gpt-5)",
+    ),
     output_dir: Path | None = typer.Option(None, "--output-dir", "-o", help="Base output directory (default: runs/)"),
     score_dir: Path | None = typer.Option(None, "--score-dir", "-s", help="Directory to write per-dimension JSON results"),
 ) -> None:
@@ -606,7 +613,10 @@ def score(
 def score_dimension_cmd(
     video_id: str = typer.Argument(..., help="YouTube video ID (run dir must exist)"),
     dimension: str = typer.Argument(..., help="Dimension to score (faithfulness, proportionality, embellishment, hallucination, tone)"),
-    model: str = typer.Option("claude-sonnet-4-5-20250929", "--model", "-m", help="Model to use for judging"),
+    model: str | None = typer.Option(
+        None, "--model", "-m",
+        help="LiteLLM model string for judging (e.g. anthropic/claude-sonnet-4-5-20250929, openai/gpt-5)",
+    ),
     output_dir: Path | None = typer.Option(None, "--output-dir", "-o", help="Base output directory (default: runs/)"),
     score_dir: Path | None = typer.Option(None, "--score-dir", "-s", help="Directory to write dimension JSON result"),
 ) -> None:
@@ -629,7 +639,8 @@ def score_dimension_cmd(
         print(f"ERROR: {essay_path} not found — run essay step first")
         raise typer.Exit(1)
 
-    dim_result = score_one(transcript_path.read_text(), essay_path.read_text(), dimension, model)
+    with llm.run_context(essay_dir):
+        dim_result = score_one(transcript_path.read_text(), essay_path.read_text(), dimension, model)
     print(f"\n  {dimension}: {dim_result['score']}/10")
     print(f"  {dim_result['rationale']}\n")
 

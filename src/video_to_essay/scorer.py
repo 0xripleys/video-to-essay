@@ -17,16 +17,15 @@ full-document call (needs global view). Aggregate chunk scores via mean (or min
 for hallucination).
 """
 
+import json
 import logging
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import Any
 
-import anthropic
+from video_to_essay import llm
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_MODEL = "claude-sonnet-4-5-20250929"
 
 # ---------------------------------------------------------------------------
 # Per-dimension prompts — each focuses on exactly one rubric
@@ -94,7 +93,7 @@ Does the essay sound like the speaker, or has it been over-formalized?
 }
 
 # ---------------------------------------------------------------------------
-# Tool schemas
+# Tool schemas (OpenAI function format — LiteLLM translates per-provider)
 # ---------------------------------------------------------------------------
 
 _VIOLATION_SCHEMA: dict[str, Any] = {
@@ -109,57 +108,63 @@ _VIOLATION_SCHEMA: dict[str, Any] = {
 }
 
 _DIMENSION_TOOL: dict[str, Any] = {
-    "name": "score_dimension",
-    "description": "Submit the score for this dimension.",
-    "input_schema": {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "reasoning": {"type": "string", "description": "Work through the evidence step by step before deciding on a score"},
-            "violations": {
-                "type": "array",
-                "items": _VIOLATION_SCHEMA,
-                "description": "All violations found. Empty array if none.",
+    "type": "function",
+    "function": {
+        "name": "score_dimension",
+        "description": "Submit the score for this dimension.",
+        "parameters": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "reasoning": {"type": "string", "description": "Work through the evidence step by step before deciding on a score"},
+                "violations": {
+                    "type": "array",
+                    "items": _VIOLATION_SCHEMA,
+                    "description": "All violations found. Empty array if none.",
+                },
+                "score": {"type": "integer", "description": "1-10"},
+                "rationale": {"type": "string", "description": "2-3 sentence rationale"},
             },
-            "score": {"type": "integer", "description": "1-10"},
-            "rationale": {"type": "string", "description": "2-3 sentence rationale"},
+            "required": ["reasoning", "violations", "score", "rationale"],
         },
-        "required": ["reasoning", "violations", "score", "rationale"],
     },
 }
 
 _PROPORTIONALITY_TOOL: dict[str, Any] = {
-    "name": "score_dimension",
-    "description": "Submit the score for this dimension.",
-    "input_schema": {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "reasoning": {"type": "string", "description": "Work through the evidence step by step before deciding on a score"},
-            "topic_analysis": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": {
-                        "topic": {"type": "string"},
-                        "transcript_share": {"type": "string"},
-                        "essay_share": {"type": "string"},
-                        "assessment": {"type": "string"},
+    "type": "function",
+    "function": {
+        "name": "score_dimension",
+        "description": "Submit the score for this dimension.",
+        "parameters": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "reasoning": {"type": "string", "description": "Work through the evidence step by step before deciding on a score"},
+                "topic_analysis": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "topic": {"type": "string"},
+                            "transcript_share": {"type": "string"},
+                            "essay_share": {"type": "string"},
+                            "assessment": {"type": "string"},
+                        },
+                        "required": ["topic", "transcript_share", "essay_share", "assessment"],
                     },
-                    "required": ["topic", "transcript_share", "essay_share", "assessment"],
+                    "description": "3-5 major topics with transcript vs essay share",
                 },
-                "description": "3-5 major topics with transcript vs essay share",
+                "violations": {
+                    "type": "array",
+                    "items": _VIOLATION_SCHEMA,
+                    "description": "All violations found. Empty array if none.",
+                },
+                "score": {"type": "integer", "description": "1-10"},
+                "rationale": {"type": "string", "description": "2-3 sentence rationale"},
             },
-            "violations": {
-                "type": "array",
-                "items": _VIOLATION_SCHEMA,
-                "description": "All violations found. Empty array if none.",
-            },
-            "score": {"type": "integer", "description": "1-10"},
-            "rationale": {"type": "string", "description": "2-3 sentence rationale"},
+            "required": ["reasoning", "topic_analysis", "violations", "score", "rationale"],
         },
-        "required": ["reasoning", "topic_analysis", "violations", "score", "rationale"],
     },
 }
 
@@ -168,32 +173,19 @@ _PROPORTIONALITY_TOOL: dict[str, Any] = {
 # ---------------------------------------------------------------------------
 
 
-def _api_call_with_retry(
-    client: anthropic.Anthropic,
-    max_retries: int = 3,
-    **kwargs: Any,
-) -> anthropic.types.Message:
-    """Make an API call with exponential backoff on rate limit errors."""
-    for attempt in range(max_retries):
-        try:
-            return client.messages.create(**kwargs)
-        except anthropic.RateLimitError:
-            if attempt == max_retries - 1:
-                raise
-            wait = 2 ** attempt * 15  # 15s, 30s, 60s
-            logger.warning("Rate limited, retrying in %ds...", wait)
-            time.sleep(wait)
-    raise RuntimeError("Unreachable")
-
-
 def _score_one_dimension(
-    client: anthropic.Anthropic,
     transcript: str,
     essay: str,
     dimension: str,
-    model: str,
+    model: str | None,
+    step_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """Score a single dimension via one API call."""
+    """Score a single dimension via one API call.
+
+    `step_dir` is passed explicitly (rather than relying on contextvars)
+    because this runs inside ThreadPoolExecutor workers, which don't
+    inherit the parent's contextvars.
+    """
     tool = _PROPORTIONALITY_TOOL if dimension == "proportionality" else _DIMENSION_TOOL
     prompt = _BASE_PROMPT.format(
         transcript=transcript,
@@ -201,16 +193,24 @@ def _score_one_dimension(
         rubric=_RUBRICS[dimension],
     )
 
-    msg = _api_call_with_retry(
-        client,
-        model=model,
-        max_tokens=4096,
-        tools=[tool],
-        tool_choice={"type": "tool", "name": "score_dimension"},
-        messages=[{"role": "user", "content": prompt}],
-    )
+    def _call() -> Any:
+        return llm.complete(
+            task="score",
+            model=model,
+            max_tokens=4096,
+            tools=[tool],
+            tool_choice={"type": "function", "function": {"name": "score_dimension"}},
+            messages=[{"role": "user", "content": prompt}],
+            num_retries=5,
+        )
 
-    return msg.content[0].input
+    if step_dir is not None:
+        with llm.run_context(step_dir):
+            response = _call()
+    else:
+        response = _call()
+
+    return json.loads(response.choices[0].message.tool_calls[0].function.arguments)
 
 
 DIMENSION_NAMES = ["faithfulness", "proportionality", "embellishment", "hallucination", "tone"]
@@ -220,17 +220,17 @@ def score_one(
     transcript: str,
     essay: str,
     dimension: str,
-    model: str = DEFAULT_MODEL,
+    model: str | None = None,
 ) -> dict[str, Any]:
     """Score a single dimension. Returns the dimension result dict."""
-    client = anthropic.Anthropic()
-    return _score_one_dimension(client, transcript, essay, dimension, model)
+    step_dir = llm._step_dir.get()
+    return _score_one_dimension(transcript, essay, dimension, model, step_dir)
 
 
 def score_essay(
     transcript: str,
     essay: str,
-    model: str = DEFAULT_MODEL,
+    model: str | None = None,
 ) -> dict[str, Any]:
     """Score an essay against its source transcript across 5 quality dimensions.
 
@@ -239,29 +239,32 @@ def score_essay(
 
     Returns a dict with overall_score, dimensions, summary, and model.
     """
-    client = anthropic.Anthropic()
-    dimension_names = ["faithfulness", "proportionality", "embellishment", "hallucination", "tone"]
+    # Capture the persistence directory on the calling thread; ThreadPoolExecutor
+    # workers don't inherit contextvars, so each worker reopens run_context()
+    # with this explicit step_dir.
+    step_dir = llm._step_dir.get()
 
-    # Score all 5 dimensions in parallel
     dimensions: dict[str, Any] = {}
     with ThreadPoolExecutor(max_workers=5) as pool:
         futures = {
-            pool.submit(_score_one_dimension, client, transcript, essay, name, model): name
-            for name in dimension_names
+            pool.submit(
+                _score_one_dimension, transcript, essay, name, model, step_dir,
+            ): name
+            for name in DIMENSION_NAMES
         }
         for future in as_completed(futures):
             name = futures[future]
             dimensions[name] = future.result()
             logger.info("%s: %d/10", name, dimensions[name]["score"])
 
-    scores = [dimensions[name]["score"] for name in dimension_names]
+    scores = [dimensions[name]["score"] for name in DIMENSION_NAMES]
     summary = " ".join(
         f"{name.capitalize()}: {dimensions[name]['rationale']}"
-        for name in dimension_names
+        for name in DIMENSION_NAMES
     )
     return {
         "overall_score": round(sum(scores) / len(scores), 1),
         "dimensions": dimensions,
         "summary": summary,
-        "model": model,
+        "model": model or llm.MODELS["score"],
     }
