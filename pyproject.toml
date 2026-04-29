@@ -17,6 +17,7 @@ dependencies = [
     "sentry-sdk>=2.0",
     "typer>=0.23.0",
     "yt-dlp>=2026.3",
+    "litellm>=1.83.7",
 ]
 
 [project.scripts]
