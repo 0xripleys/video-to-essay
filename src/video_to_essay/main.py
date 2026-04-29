@@ -216,7 +216,9 @@ def _step_essay(video_id: str, run_dir: Path, force: bool) -> bool:
         return False
 
 
-def _step_extract_frames(video_id: str, run_dir: Path, force: bool) -> bool:
+def _step_extract_frames(
+    video_id: str, run_dir: Path, force: bool, model: str | None = None,
+) -> bool:
     dl_dir = _step_dir(run_dir, "download")
     transcript_dir = _step_dir(run_dir, "transcript")
     filter_dir = _step_dir(run_dir, "filter_sponsors")
@@ -258,6 +260,7 @@ def _step_extract_frames(video_id: str, run_dir: Path, force: bool) -> bool:
             output_dir=frames_dir,
             transcript_entries=transcript_entries,
             sponsor_ranges=sponsor_ranges,
+            model=model,
         )
         return True
     except Exception as e:
@@ -562,10 +565,14 @@ def extract_frames_cmd(
     video_id: str = typer.Argument(..., help="YouTube video ID (run dir must exist)"),
     force: bool = typer.Option(False, "--force", help="Re-extract frames"),
     output_dir: Path | None = typer.Option(None, "--output-dir", "-o", help="Base output directory (default: runs/)"),
+    model: str | None = typer.Option(
+        None, "--model", "-m",
+        help="Override the vision model for frame classification (e.g. openai/gpt-5)",
+    ),
 ) -> None:
     """Extract and classify frames from existing video."""
     run_dir = _run_dir(video_id, output_dir)
-    if not _step_extract_frames(video_id, run_dir, force):
+    if not _step_extract_frames(video_id, run_dir, force, model=model):
         raise typer.Exit(1)
 
 

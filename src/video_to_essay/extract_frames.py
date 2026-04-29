@@ -17,7 +17,7 @@ import re
 import subprocess
 from pathlib import Path
 
-import anthropic
+from video_to_essay import llm
 import cv2
 import imagehash
 from PIL import Image
@@ -168,10 +168,9 @@ def classify_frames(
     frames: list[Path],
     interval_seconds: int,
     transcript_entries: list[tuple[int, str]] | None = None,
+    model: str | None = None,
 ) -> list[dict[str, str | int]]:
-    """Send frames to Claude Haiku for classification and relevance scoring."""
-    client = anthropic.Anthropic()
-
+    """Send frames to a vision model for classification and relevance scoring."""
     results: list[dict[str, str | int]] = []
 
     for frame_path in frames:
@@ -191,19 +190,18 @@ def classify_frames(
                 f'"{context}"'
             )
 
-        msg = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+        response = llm.complete(
+            task="frame_classify",
+            model=model,
             max_tokens=256,
             messages=[
                 {
                     "role": "user",
                     "content": [
                         {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": "image/jpeg",
-                                "data": b64,
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{b64}",
                             },
                         },
                         {
@@ -223,7 +221,7 @@ def classify_frames(
             ],
         )
 
-        raw = msg.content[0].text.strip()
+        raw = response.choices[0].message.content.strip()
         # Handle markdown code blocks
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
@@ -269,6 +267,7 @@ def extract_and_classify(
     min_value: int = 3,
     skip_categories: set[str] | None = None,
     sponsor_ranges: list[tuple[int, int]] | None = None,
+    model: str | None = None,
 ) -> list[dict[str, str | int]]:
     """Full frame extraction pipeline: sample -> dedup -> classify -> filter -> save.
 
@@ -304,8 +303,11 @@ def extract_and_classify(
     logger.info("  %d -> %d unique frames", len(frames), len(unique_frames))
 
     # Step 3: Classify with vision LLM
-    logger.info("Step 3: Classifying %d frames with Claude Haiku...", len(unique_frames))
-    classifications = classify_frames(unique_frames, interval, transcript_entries)
+    logger.info("Step 3: Classifying %d frames with vision model...", len(unique_frames))
+    with llm.run_context(output_dir):
+        classifications = classify_frames(
+            unique_frames, interval, transcript_entries, model=model,
+        )
 
     # Step 4: Filter
     logger.info("Step 4: Filtering (min_value=%d, skip=%s)...", min_value, skip_categories)
