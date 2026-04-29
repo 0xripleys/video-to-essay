@@ -8,20 +8,24 @@ returning a cleaned transcript and timestamp ranges for downstream filtering.
 import json
 import re
 
-import anthropic
+from video_to_essay import llm
 
 
-def filter_sponsors(transcript: str) -> tuple[str, list[tuple[int, int]]]:
+def filter_sponsors(
+    transcript: str,
+    model: str | None = None,
+) -> tuple[str, list[tuple[int, int]]]:
     """Identify and remove sponsor segments from a transcript.
+
+    Caller is responsible for opening llm.run_context() if persistence is desired.
 
     Returns:
         A tuple of (cleaned_transcript, sponsor_ranges) where sponsor_ranges
         is a list of (start_seconds, end_seconds) pairs.
     """
-    client = anthropic.Anthropic()
-
-    msg = client.messages.create(
-        model="claude-haiku-4-5-20251001",
+    response = llm.complete(
+        task="sponsor_filter",
+        model=model,
         max_tokens=1024,
         messages=[
             {
@@ -47,8 +51,7 @@ def filter_sponsors(transcript: str) -> tuple[str, list[tuple[int, int]]]:
         ],
     )
 
-    raw = msg.content[0].text.strip()
-    # Handle markdown code blocks
+    raw = response.choices[0].message.content.strip()
     if raw.startswith("```"):
         raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
 
@@ -73,7 +76,6 @@ def _strip_segments(transcript: str, ranges: list[tuple[int, int]]) -> str:
 
     kept_paragraphs: list[str] = []
     for paragraph in transcript.split("\n\n"):
-        # Extract timestamp from paragraph start
         match = re.match(r"(?:\*\*[^*]+\*\*\s*)?\[(\d+):(\d{2})\]", paragraph)
         if not match:
             kept_paragraphs.append(paragraph)

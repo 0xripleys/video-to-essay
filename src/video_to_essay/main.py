@@ -22,6 +22,7 @@ import typer
 
 DEFAULT_RUNS_DIR = Path("runs")
 
+from . import llm
 from .diarize import transcribe_with_deepgram
 from .extract_frames import extract_and_classify, parse_transcript
 from .filter_sponsors import filter_sponsors
@@ -156,7 +157,9 @@ def _step_transcript(
         return False
 
 
-def _step_filter_sponsors(video_id: str, run_dir: Path, force: bool) -> bool:
+def _step_filter_sponsors(
+    video_id: str, run_dir: Path, force: bool, model: str | None = None,
+) -> bool:
     transcript_dir = _step_dir(run_dir, "transcript")
     filter_dir = _step_dir(run_dir, "filter_sponsors")
 
@@ -171,7 +174,10 @@ def _step_filter_sponsors(video_id: str, run_dir: Path, force: bool) -> bool:
         print("ERROR: no transcript found — run transcript step first")
         return False
     try:
-        cleaned, sponsor_ranges = filter_sponsors(transcript_path.read_text())
+        with llm.run_context(filter_dir):
+            cleaned, sponsor_ranges = filter_sponsors(
+                transcript_path.read_text(), model=model,
+            )
         clean_path.write_text(cleaned)
         segments_path.write_text(json.dumps(sponsor_ranges, indent=2))
         if sponsor_ranges:
@@ -509,10 +515,14 @@ def filter_sponsors_cmd(
     video_id: str = typer.Argument(..., help="YouTube video ID (run dir must exist)"),
     force: bool = typer.Option(False, "--force", help="Re-run sponsor filtering"),
     output_dir: Path | None = typer.Option(None, "--output-dir", "-o", help="Base output directory (default: runs/)"),
+    model: str | None = typer.Option(
+        None, "--model", "-m",
+        help="Override the model for sponsor detection (e.g. openai/gpt-5)",
+    ),
 ) -> None:
     """Filter sponsor/ad segments from existing transcript."""
     run_dir = _run_dir(video_id, output_dir)
-    if not _step_filter_sponsors(video_id, run_dir, force):
+    if not _step_filter_sponsors(video_id, run_dir, force, model=model):
         raise typer.Exit(1)
 
 

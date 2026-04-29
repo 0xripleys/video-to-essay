@@ -207,7 +207,7 @@ def test_pipeline_happy_path(
     assert segments == [[120, 150]]
 
     # filter_sponsors was called with the original transcript
-    mock_filter.assert_called_once_with(TRANSCRIPT)
+    mock_filter.assert_called_once_with(TRANSCRIPT, model=None)
 
     # -----------------------------------------------------------------------
     # Step 3: Essay

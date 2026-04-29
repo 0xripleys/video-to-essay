@@ -14,7 +14,7 @@ import sentry_sdk
 
 logger = logging.getLogger(__name__)
 
-from . import db
+from . import db, llm
 from .analytics import capture as track
 from .diarize import transcribe_with_deepgram
 from .extract_frames import extract_and_classify, parse_transcript
@@ -75,7 +75,8 @@ def _process_one(video: dict) -> None:
     # Step 2: Filter sponsors
     filter_dir = _step_dir(run_dir, "filter_sponsors")
     transcript_text = (transcript_dir / "transcript.txt").read_text()
-    cleaned, sponsor_ranges = filter_sponsors(transcript_text)
+    with llm.run_context(filter_dir):
+        cleaned, sponsor_ranges = filter_sponsors(transcript_text)
     (filter_dir / "transcript_clean.txt").write_text(cleaned)
     (filter_dir / "sponsor_segments.json").write_text(json.dumps(sponsor_ranges, indent=2))
 
