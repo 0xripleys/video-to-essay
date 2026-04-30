@@ -253,8 +253,9 @@ def _check_channel(channel: dict, api_key: str) -> int:
 
 def discover_loop(poll_interval: float = 60.0) -> None:
     """Poll for channels due for a check and discover new videos."""
-    from .worker import init_sentry
+    from .worker import init_logging, init_sentry
     init_sentry()
+    init_logging()
     logger.info("Discover worker started (polling every %ss)", poll_interval)
     api_key = os.environ.get("YOUTUBE_API_KEY")
     if not api_key:

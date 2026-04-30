@@ -30,15 +30,19 @@ def init_sentry() -> None:
     _sentry_initialized = True
 
 
-def start_worker_threads() -> list[threading.Thread]:
-    """Start all worker loops in daemon threads."""
-    init_sentry()
-
+def init_logging() -> None:
+    """Configure root logger with timestamps. Safe to call multiple times."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+
+
+def start_worker_threads() -> list[threading.Thread]:
+    """Start all worker loops in daemon threads."""
+    init_sentry()
+    init_logging()
     workers = [
         ("discover", discover_loop, 60.0),
         ("download", download_loop, 10.0),

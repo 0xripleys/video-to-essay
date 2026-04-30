@@ -221,8 +221,9 @@ def _process_one(video: dict) -> None:
 
 def process_loop(poll_interval: float = 10.0) -> None:
     """Poll for videos pending processing and run the pipeline."""
-    from .worker import init_sentry
+    from .worker import init_logging, init_sentry
     init_sentry()
+    init_logging()
     logger.info("Process worker started (polling every %ss)", poll_interval)
     for key in ("DATABASE_URL", "OPENROUTER_API_KEY", "DEEPGRAM_API_KEY", "S3_BUCKET_NAME"):
         val = os.environ.get(key)
