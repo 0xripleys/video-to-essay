@@ -98,6 +98,11 @@ def _process_one(video: dict) -> None:
         transcript_entries=transcript_entries,
         sponsor_ranges=sponsor_ranges,
     )
+    # Upload frame artifacts (classifications.json + per-frame llm_calls) before
+    # the place-images branch. Run unconditionally — talking-head videos can yield
+    # an empty kept set, but the classifications + call logs still need to land
+    # on S3 for the runs viewer's audit trail.
+    upload_run(youtube_video_id, step_dirs=["04_frames"])
 
     # Step 5-6: Place images + annotate
     place_dir = _step_dir(run_dir, "place_images")
@@ -110,8 +115,6 @@ def _process_one(video: dict) -> None:
         with llm.run_context(place_dir):
             with_images = place_images_in_essay(essay_text, kept, image_prefix)
             annotated = annotate_essay(with_images)
-        # Upload frames first so S3 URLs are valid
-        upload_run(youtube_video_id, step_dirs=["04_frames"])
         # Rewrite relative image paths to public S3 URLs
         prefix_pattern = re.escape(image_prefix)
         def _to_s3_url(m: re.Match[str]) -> str:
