@@ -11,6 +11,7 @@ import {
   primaryOutputFilename,
   type CellSummary,
 } from "@/app/lib/experiments";
+import { getRunArtifact } from "@/app/lib/s3";
 import SideBySide from "./SideBySide";
 
 const FULL_STEPS = [
@@ -75,6 +76,11 @@ export default async function SideBySidePage({
       return { cell, meta, score, llmCalls, body: body ?? "" };
     }),
   );
+  const [cleanTranscript, rawTranscript] = await Promise.all([
+    getRunArtifact(videoId, "02_filter_sponsors/transcript_clean.txt"),
+    getRunArtifact(videoId, "01_transcript/transcript.txt"),
+  ]);
+  const sourceTranscript = cleanTranscript || rawTranscript || "";
 
   return (
     <div className="px-6 py-6">
@@ -117,6 +123,14 @@ export default async function SideBySidePage({
         step={manifest.step}
         expId={expId}
         videoId={videoId}
+        sourceTranscript={sourceTranscript}
+        sourceTranscriptLabel={
+          cleanTranscript
+            ? "Source transcript: sponsor-filtered Deepgram transcript"
+            : rawTranscript
+              ? "Source transcript: raw Deepgram transcript"
+              : "Source transcript"
+        }
       />
     </div>
   );

@@ -517,6 +517,7 @@ def run_cell(
     runs_base: Path,
     configs: ExperimentConfigs | None,
     upload: bool,
+    auto_score: bool = True,
 ) -> CellResult:
     """Run a single experiment cell and write its variant directory.
 
@@ -555,7 +556,7 @@ def run_cell(
                 )
 
             # Score essays automatically (the spec's auto-score rule)
-            if plan.step == "essay":
+            if plan.step == "essay" and auto_score:
                 try:
                     transcript = fetched["01_transcript/transcript.txt"].read_text()
                     essay = output_paths["essay"].read_text()
@@ -590,7 +591,10 @@ def run_cell(
         meta["model"] = plan.variant
 
     if plan.step == "essay":
-        meta["score_status"] = score_status or ("ok" if score_overall is not None else "skipped")
+        if not auto_score:
+            meta["score_status"] = "disabled"
+        else:
+            meta["score_status"] = score_status or ("ok" if score_overall is not None else "skipped")
         meta["score_overall"] = score_overall
         meta["judge_model"] = llm.MODELS["score"]
 
@@ -744,6 +748,7 @@ def run_sweep(
     runs_base: Path = DEFAULT_RUNS_BASE,
     output_base: Path = DEFAULT_OUTPUT_BASE,
     upload: bool = True,
+    auto_score: bool = True,
     progress_cb: Any = None,
 ) -> dict[str, Any]:
     """Execute the sweep. Returns the manifest dict."""
@@ -757,6 +762,7 @@ def run_sweep(
         futures = {
             pool.submit(
                 run_cell, cell, plan.exp_id, work_root, runs_base, plan.configs, upload,
+                auto_score,
             ): cell
             for cell in plan.cells
         }
@@ -768,7 +774,7 @@ def run_sweep(
 
     finished_at = datetime.now(timezone.utc).isoformat()
 
-    manifest = _build_manifest(plan, results, started_at, finished_at)
+    manifest = _build_manifest(plan, results, started_at, finished_at, auto_score)
     manifest_path = work_root / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, default=str))
 
@@ -793,6 +799,7 @@ def _build_manifest(
     results: list[CellResult],
     started_at: str,
     finished_at: str,
+    auto_score: bool = True,
 ) -> dict[str, Any]:
     cells_payload: list[dict[str, Any]] = []
     for r in results:
@@ -814,6 +821,7 @@ def _build_manifest(
         "started_at": started_at,
         "finished_at": finished_at,
         "judge_model": llm.MODELS["score"],
+        "auto_score": auto_score,
         "cells": cells_payload,
         "ok_count": sum(1 for r in results if r.status == "ok"),
         "fail_count": sum(1 for r in results if r.status != "ok"),

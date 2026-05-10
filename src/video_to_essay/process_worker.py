@@ -148,7 +148,7 @@ def process_loop(poll_interval: float = 10.0) -> None:
     from .worker import init_sentry
     init_sentry()
     logger.info("Process worker started (polling every %ss)", poll_interval)
-    for key in ("DATABASE_URL", "ANTHROPIC_API_KEY", "DEEPGRAM_API_KEY", "S3_BUCKET_NAME"):
+    for key in ("DATABASE_URL", "OPENROUTER_API_KEY", "DEEPGRAM_API_KEY", "S3_BUCKET_NAME"):
         val = os.environ.get(key)
         logger.info("  %s: %s", key, "set" if val else "NOT SET")
     while True:

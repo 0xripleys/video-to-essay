@@ -46,11 +46,15 @@ export default function SideBySide({
   step,
   expId,
   videoId,
+  sourceTranscript,
+  sourceTranscriptLabel,
 }: {
   panels: Panel[];
   step: string;
   expId: string;
   videoId: string;
+  sourceTranscript: string;
+  sourceTranscriptLabel: string;
 }) {
   const refs = useRef<(HTMLDivElement | null)[]>([]);
   const syncing = useRef(false);
@@ -92,13 +96,25 @@ export default function SideBySide({
   const showScore = step === "essay";
 
   return (
-    <div
-      className="mt-6 grid gap-4"
-      style={{
-        gridTemplateColumns: `repeat(${panels.length}, minmax(0, 1fr))`,
-      }}
-    >
-      {panels.map((p, i) => (
+    <>
+      <section className="mx-auto mt-6 max-w-7xl rounded-lg border border-amber-200 bg-amber-50">
+        <details>
+          <summary className="cursor-pointer px-4 py-3 text-xs font-medium uppercase tracking-wide text-amber-800 hover:text-amber-950">
+            {sourceTranscriptLabel}
+          </summary>
+          <pre className="max-h-[45vh] overflow-y-auto whitespace-pre-wrap border-t border-amber-200 px-5 py-4 text-sm leading-relaxed text-stone-800">
+            {sourceTranscript || "No source transcript artifact found for this run."}
+          </pre>
+        </details>
+      </section>
+
+      <div
+        className="mt-6 grid gap-4"
+        style={{
+          gridTemplateColumns: `repeat(${panels.length}, minmax(0, 1fr))`,
+        }}
+      >
+        {panels.map((p, i) => (
         <div
           key={p.cell.slug}
           className="overflow-hidden rounded-lg border border-stone-200 bg-white"
@@ -148,8 +164,9 @@ export default function SideBySide({
             step={step}
           />
         </div>
-      ))}
-    </div>
+        ))}
+      </div>
+    </>
   );
 }
 

@@ -22,15 +22,15 @@ from litellm import ModelResponse
 
 # Canonical model assignments. Edit here for permanent swaps.
 MODELS: dict[str, str] = {
-    "essay_single":   "anthropic/claude-sonnet-4-5-20250929",
-    "essay_multi":    "anthropic/claude-sonnet-4-5-20250929",
-    "style_profile":  "anthropic/claude-haiku-4-5-20251001",
-    "sponsor_filter": "anthropic/claude-haiku-4-5-20251001",
-    "frame_classify": "anthropic/claude-haiku-4-5-20251001",
-    "diarize_helper": "anthropic/claude-haiku-4-5-20251001",
-    "place_images":   "anthropic/claude-sonnet-4-5-20250929",
+    "essay_single":   "openrouter/deepseek/deepseek-chat-v3.1",
+    "essay_multi":    "openrouter/deepseek/deepseek-chat-v3.1",
+    "style_profile":  "openrouter/deepseek/deepseek-chat-v3.1",
+    "sponsor_filter": "openrouter/deepseek/deepseek-chat-v3.1",
+    "frame_classify": "openrouter/google/gemini-2.5-flash-lite",
+    "diarize_helper": "openrouter/deepseek/deepseek-chat-v3.1",
+    "place_images":   "openrouter/deepseek/deepseek-chat-v3.1",
     "score":          "anthropic/claude-sonnet-4-5-20250929",
-    "summarize":      "anthropic/claude-sonnet-4-5-20250929",
+    "summarize":      "openrouter/deepseek/deepseek-chat-v3.1",
 }
 
 _step_dir: contextvars.ContextVar[Path | None] = contextvars.ContextVar(

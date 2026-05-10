@@ -714,6 +714,9 @@ def experiment(
     no_upload: bool = typer.Option(
         False, "--no-upload", help="Skip S3 upload (local-only)",
     ),
+    no_score: bool = typer.Option(
+        False, "--no-score", help="For essay experiments, skip automatic scorer calls",
+    ),
     runs_base: Path = typer.Option(
         Path("runs"), "--runs-base",
         help="Local runs dir to source canonical inputs from",
@@ -806,6 +809,7 @@ def experiment(
         runs_base=runs_base,
         output_base=output_base,
         upload=not no_upload,
+        auto_score=not no_score,
         progress_cb=_on_progress,
     )
     typer.echo(

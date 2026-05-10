@@ -33,7 +33,7 @@ cd web && npm install && npm run dev       # Dev server on :3000
 
 ### Workers (background processing)
 
-Workers are started by importing `start_worker_threads()` from `video_to_essay.worker`. They require `DATABASE_URL`, `ANTHROPIC_API_KEY`, `DEEPGRAM_API_KEY`, `AGENTMAIL_API_KEY`, `AGENTMAIL_INBOX_ID`, `YOUTUBE_API_KEY` in `.env`.
+Workers are started by importing `start_worker_threads()` from `video_to_essay.worker`. They require `DATABASE_URL`, `OPENROUTER_API_KEY`, `DEEPGRAM_API_KEY`, `AGENTMAIL_API_KEY`, `AGENTMAIL_INBOX_ID`, `YOUTUBE_API_KEY` in `.env`.
 
 On macOS, each worker runs as a LaunchAgent (`~/Library/LaunchAgents/com.video-to-essay.*.plist`). To restart:
 
@@ -98,9 +98,9 @@ Each step is idempotent (skips if output exists unless `--force`). Each step rea
 - **`deliver_worker.py`** — Creates subscription delivery rows, sends emails via AgentMail
 - **`diarize.py`** — Deepgram transcription + speaker diarization
 - **`transcriber.py`** — Essay generation (single/multi-speaker) + video download
-- **`filter_sponsors.py`** — Haiku detects sponsor segments
-- **`extract_frames.py`** — Frame sampling, pHash dedup, Haiku classification
-- **`place_images.py`** — Sonnet places images + annotates figures (JSON-based approach)
+- **`filter_sponsors.py`** — DeepSeek detects sponsor segments
+- **`extract_frames.py`** — Frame sampling, pHash dedup, Gemini Flash Lite classification
+- **`place_images.py`** — DeepSeek places images + annotates figures (JSON-based approach)
 - **`scorer.py`** — LLM-as-judge essay quality evaluation (5 dimensions, parallel API calls)
 - **`email_sender.py`** — AgentMail integration, markdown → HTML email
 - **`s3.py`** — S3 upload helpers for run artifacts (frames, essays)
@@ -117,7 +117,7 @@ Each step is idempotent (skips if output exists unless `--force`). Each step rea
 
 - **Database** — Supabase Postgres, shared between web app (TypeScript `pg`) and workers (Python `psycopg`). Both sides have their own query functions.
 - **Auth** — WorkOS. Dev mode: if `WORKOS_API_KEY` is unset, auto-creates a `dev@localhost` user.
-- **LLM calls** — All routed through `src/video_to_essay/llm.py`, a thin wrapper around LiteLLM. Per-task model defaults live in the `MODELS` dict at the top of `llm.py` — edit it there to swap models permanently. For ad-hoc experimentation, pass `--model <litellm-string>` to any single-step CLI subcommand (`essay`, `score`, `place-images`, `extract-frames`, `filter-sponsors`, `diarize`, `score-dimension`). Every call is persisted as JSON to `<step_dir>/llm_calls/` for debugging — base64 image bytes are stripped to sha256+size references to avoid duplicating frames already on S3.
+- **LLM calls** — All routed through `src/video_to_essay/llm.py`, a thin wrapper around LiteLLM. Per-task model defaults live in the `MODELS` dict at the top of `llm.py` — edit it there to swap models permanently. Current production defaults use DeepSeek V3.1 via OpenRouter for text tasks and image placement, Gemini Flash Lite via OpenRouter for frame classification, and Sonnet for explicit scoring/evaluation. For ad-hoc experimentation, pass `--model <litellm-string>` to any single-step CLI subcommand (`essay`, `score`, `place-images`, `extract-frames`, `filter-sponsors`, `diarize`, `score-dimension`). Every call is persisted as JSON to `<step_dir>/llm_calls/` for debugging — base64 image bytes are stripped to sha256+size references to avoid duplicating frames already on S3.
 - **Deepgram** — `DEEPGRAM_API_KEY` required for transcription. Nova-3 with diarization.
 - **YouTube** — yt-dlp with `--remote-components ejs:github` for JS challenges. Cloud IPs need `--cookies`. Requires `ffmpeg` and `deno` on PATH.
 - **Email** — AgentMail API. Essays sent as HTML (inline-styled, sans-serif, 700px max-width) with plaintext fallback (80-char wrapped). Subject: `{Channel Name}: {Video Title}`.
@@ -131,7 +131,8 @@ All stored in `.env` at project root:
 | Variable | Used by | Purpose |
 |----------|---------|---------|
 | `DATABASE_URL` | Workers + Web | Supabase Postgres connection string |
-| `ANTHROPIC_API_KEY` | Workers (process) | Claude API for essay/frame/sponsor tasks |
+| `OPENROUTER_API_KEY` | Workers + CLI | OpenRouter API for default text and vision LLM tasks |
+| `ANTHROPIC_API_KEY` | CLI | Claude API for scorer/evaluation tasks |
 | `DEEPGRAM_API_KEY` | Workers (process) | Deepgram Nova-3 transcription |
 | `AGENTMAIL_API_KEY` | Workers (deliver) | Email sending |
 | `AGENTMAIL_INBOX_ID` | Workers (deliver) | AgentMail sender inbox |
