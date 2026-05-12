@@ -6,6 +6,7 @@ import os
 import re
 import traceback
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import httpx
@@ -30,7 +31,33 @@ from .transcriber import transcript_to_essay
 
 RUNS_DIR = Path("runs")
 MAX_RETRIES = 3
-TRANSIENT_ERRORS = (httpx.RemoteProtocolError, httpx.ReadError, httpx.ConnectError, ConnectionError)
+TRANSIENT_ERRORS = (
+    httpx.RemoteProtocolError,
+    httpx.ReadError,
+    httpx.ConnectError,
+    httpx.ReadTimeout,
+    httpx.WriteTimeout,
+    httpx.ConnectTimeout,
+    httpx.PoolTimeout,
+    ConnectionError,
+    TimeoutError,
+)
+TRANSIENT_ERROR_MARKERS = (
+    "ssl/tls alert bad record mac",
+    "sslv3_alert_bad_record_mac",
+    "bad record mac",
+    "peer closed connection without sending complete message body",
+    "incomplete chunked read",
+    "remote protocol error",
+    "connection reset",
+    "connection aborted",
+    "write operation timed out",
+    "read operation timed out",
+    "connect operation timed out",
+    "overloaded_error",
+    "anthropicerror - overloaded",
+    "anthropicexception - overloaded",
+)
 
 STEP_DIRS: dict[str, str] = {
     "transcript": "01_transcript",
@@ -45,6 +72,55 @@ def _step_dir(run_dir: Path, step: str) -> Path:
     d = run_dir / STEP_DIRS[step]
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _iter_exception_chain(exc: BaseException) -> Iterator[BaseException]:
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        yield current
+        current = current.__cause__ or current.__context__
+
+
+def _is_transient_error(exc: BaseException) -> bool:
+    """Return True for transport/provider outages that are worth retrying.
+
+    LiteLLM often wraps low-level httpx/OpenSSL failures in provider-specific
+    API exceptions, so type checks alone miss the failures seen in production.
+    """
+    for chain_exc in _iter_exception_chain(exc):
+        if isinstance(chain_exc, TRANSIENT_ERRORS):
+            return True
+        message = str(chain_exc).lower()
+        if any(marker in message for marker in TRANSIENT_ERROR_MARKERS):
+            return True
+    return False
+
+
+def _handle_transient_failure(video: dict, attempt: int) -> None:
+    if attempt < MAX_RETRIES:
+        wait = 2 ** attempt
+        logger.warning(
+            "Process: transient error on %s (attempt %d/%d), retrying in %ds",
+            video["youtube_video_id"],
+            attempt,
+            MAX_RETRIES,
+            wait,
+        )
+        logger.debug("Traceback:", exc_info=True)
+        time.sleep(wait)
+    else:
+        sentry_sdk.capture_exception()
+        logger.exception(
+            "Process: failed %s after %d attempts",
+            video["youtube_video_id"],
+            MAX_RETRIES,
+        )
+        db.mark_video_failed(
+            video["id"],
+            f"Processing failed after {MAX_RETRIES} attempts: {traceback.format_exc()}",
+        )
 
 
 def _process_one(video: dict) -> None:
@@ -159,17 +235,10 @@ def process_loop(poll_interval: float = 10.0) -> None:
                     try:
                         _process_one(video)
                         break
-                    except TRANSIENT_ERRORS:
-                        if attempt < MAX_RETRIES:
-                            wait = 2 ** attempt
-                            logger.warning("Process: transient error on %s (attempt %d/%d), retrying in %ds", video["youtube_video_id"], attempt, MAX_RETRIES, wait)
-                            logger.debug("Traceback:", exc_info=True)
-                            time.sleep(wait)
-                        else:
-                            sentry_sdk.capture_exception()
-                            logger.exception("Process: failed %s after %d attempts", video["youtube_video_id"], MAX_RETRIES)
-                            db.mark_video_failed(video["id"], f"Processing failed after {MAX_RETRIES} attempts: {traceback.format_exc()}")
-                    except Exception:
+                    except Exception as exc:
+                        if _is_transient_error(exc):
+                            _handle_transient_failure(video, attempt)
+                            continue
                         sentry_sdk.capture_exception()
                         logger.exception("Process: failed %s", video["youtube_video_id"])
                         db.mark_video_failed(video["id"], f"Processing failed: {traceback.format_exc()}")

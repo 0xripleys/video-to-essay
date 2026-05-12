@@ -9,6 +9,9 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import httpx
+import pytest
+
 
 def _seed_inputs(run_dir: Path) -> None:
     """Mimic what download_run + transcribe_with_deepgram would have produced."""
@@ -37,6 +40,50 @@ def _frames_side_effect_no_kept() -> MagicMock:
         ]))
         return []
     return MagicMock(side_effect=side_effect)
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        httpx.WriteTimeout("The write operation timed out"),
+        RuntimeError(
+            "litellm.APIError: APIError: OpenrouterException - "
+            "[SSL: SSLV3_ALERT_BAD_RECORD_MAC] ssl/tls alert bad record mac"
+        ),
+        RuntimeError(
+            "litellm.APIConnectionError: AnthropicException - peer closed "
+            "connection without sending complete message body "
+            "(incomplete chunked read)"
+        ),
+        RuntimeError(
+            "litellm.InternalServerError: AnthropicError - Overloaded"
+        ),
+    ],
+)
+def test_is_transient_error_recognizes_transport_failures(exc: Exception) -> None:
+    from video_to_essay.process_worker import _is_transient_error
+
+    assert _is_transient_error(exc)
+
+
+def test_is_transient_error_walks_exception_chain() -> None:
+    from video_to_essay.process_worker import _is_transient_error
+
+    try:
+        try:
+            raise httpx.RemoteProtocolError("server disconnected")
+        except httpx.RemoteProtocolError as inner:
+            raise RuntimeError("wrapped by provider") from inner
+    except RuntimeError as outer:
+        assert _is_transient_error(outer)
+
+
+def test_is_transient_error_rejects_content_errors() -> None:
+    from video_to_essay.process_worker import _is_transient_error
+
+    exc = TypeError("'NoneType' object is not subscriptable")
+
+    assert not _is_transient_error(exc)
 
 
 @patch("video_to_essay.process_worker.track")
