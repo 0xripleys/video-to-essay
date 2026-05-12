@@ -17,6 +17,7 @@ frames_*/
 
 # Database and runtime data
 data/
+logs/
 
 # Next.js
 web/node_modules/

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.video-to-essay.autodeploy</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__BASH_PATH__</string>
+        <string>__INSTALL_DIR__/deploy/macos/autodeploy.sh</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>__INSTALL_DIR__</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>__PATH__</string>
+        <key>GIT_TERMINAL_PROMPT</key>
+        <string>0</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartInterval</key>
+    <integer>__CHECK_INTERVAL__</integer>
+    <key>StandardOutPath</key>
+    <string>__INSTALL_DIR__/logs/autodeploy.log</string>
+    <key>StandardErrorPath</key>
+    <string>__INSTALL_DIR__/logs/autodeploy.log</string>
+</dict>
+</plist>
