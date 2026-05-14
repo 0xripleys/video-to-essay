@@ -48,6 +48,16 @@ def run_context(step_dir: Path) -> Generator[None, None, None]:
         _step_dir.reset(token)
 
 
+def current_step_dir() -> Path | None:
+    """Return the active run_context step_dir, or None if not inside one.
+
+    Use this when spawning worker threads/tasks: capture the value in the
+    parent and re-enter `run_context(captured)` inside each worker, since
+    ContextVar values are not propagated to threads automatically.
+    """
+    return _step_dir.get()
+
+
 def complete(
     task: str,
     messages: list[dict[str, Any]],
@@ -57,6 +67,7 @@ def complete(
 ) -> ModelResponse:
     """Non-streaming LLM call. Returns the full litellm ModelResponse."""
     resolved = model or MODELS[task]
+    kwargs.setdefault("timeout", 120)
     t0 = time.monotonic()
     response = litellm.completion(model=resolved, messages=messages, **kwargs)
     wall_ms = int((time.monotonic() - t0) * 1000)
@@ -78,6 +89,7 @@ def stream(
     after the stream drains.
     """
     resolved = model or MODELS[task]
+    kwargs.setdefault("timeout", 120)
     t0 = time.monotonic()
     response = litellm.completion(
         model=resolved, messages=messages, stream=True, **kwargs

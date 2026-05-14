@@ -8,6 +8,7 @@ from PIL import Image
 from video_to_essay.place_images import (
     _number_figures,
     _resize_for_email,
+    annotate_essay,
     embed_images,
     format_frame_list,
     load_kept_frames,
@@ -128,3 +129,14 @@ def test_embed_images_missing_frame(tmp_path):
     essay = "![A chart](images/frame_9999.jpg)"
     result = embed_images(essay, tmp_path, "images/")
     assert result == "![A chart](images/frame_9999.jpg)"
+
+
+# -- annotate_essay — no images returns essay unchanged, no LLM call ----------
+
+def test_annotate_essay_no_images_returns_unchanged(monkeypatch):
+    def fail(*args, **kwargs):
+        raise AssertionError("llm.complete should not be called when essay has no images")
+
+    monkeypatch.setattr("video_to_essay.place_images.llm.complete", fail)
+    essay = "Just some prose with no figures.\n\nAnother paragraph."
+    assert annotate_essay(essay) == essay

@@ -144,68 +144,86 @@ def _process_one(video: dict) -> None:
     if meta_path.exists():
         meta = json.loads(meta_path.read_text())
 
-    # Step 1: Transcript
+    # Step 1: Transcript (transcribe_with_deepgram has its own force=False skip)
     transcript_dir = _step_dir(run_dir, "transcript")
     transcribe_with_deepgram(video_path, transcript_dir, meta, force=False)
-
-    # Step 2: Filter sponsors
-    filter_dir = _step_dir(run_dir, "filter_sponsors")
     transcript_text = (transcript_dir / "transcript.txt").read_text()
-    with llm.run_context(filter_dir):
-        cleaned, sponsor_ranges = filter_sponsors(transcript_text)
-    (filter_dir / "transcript_clean.txt").write_text(cleaned)
-    (filter_dir / "sponsor_segments.json").write_text(json.dumps(sponsor_ranges, indent=2))
 
-    # Step 3: Essay
+    # Step 2: Filter sponsors — skip LLM call if outputs already exist on disk.
+    # Retries used to re-run the full pipeline; this keeps each completed step sticky.
+    filter_dir = _step_dir(run_dir, "filter_sponsors")
+    clean_path = filter_dir / "transcript_clean.txt"
+    sponsors_path = filter_dir / "sponsor_segments.json"
+    if clean_path.exists() and sponsors_path.exists():
+        logger.info("Process: %s filter_sponsors already done, skipping", youtube_video_id)
+        cleaned = clean_path.read_text()
+        sponsor_ranges = [tuple(r) for r in json.loads(sponsors_path.read_text())]
+    else:
+        with llm.run_context(filter_dir):
+            cleaned, sponsor_ranges = filter_sponsors(transcript_text)
+        clean_path.write_text(cleaned)
+        sponsors_path.write_text(json.dumps(sponsor_ranges, indent=2))
+
+    # Step 3: Essay — skip generation if essay.md already exists.
+    # summarize_essay self-skips when "Key Takeaways" header is present, so always safe to call.
     essay_dir = _step_dir(run_dir, "essay")
-    with llm.run_context(essay_dir):
-        essay_text = transcript_to_essay(cleaned, video_id=youtube_video_id)
     essay_path = essay_dir / "essay.md"
-    essay_path.write_text(essay_text)
+    if essay_path.exists():
+        logger.info("Process: %s essay already generated, skipping", youtube_video_id)
+    else:
+        with llm.run_context(essay_dir):
+            essay_text = transcript_to_essay(cleaned, video_id=youtube_video_id)
+        essay_path.write_text(essay_text)
     summarize_essay(essay_path)
     essay_text = essay_path.read_text()
 
-    # Step 4: Extract frames
+    # Step 4: Extract frames — skip if classifications.json already exists.
     frames_dir = _step_dir(run_dir, "frames")
-    transcript_entries = parse_transcript(transcript_text)
-    extract_and_classify(
-        video=video_path,
-        output_dir=frames_dir,
-        transcript_entries=transcript_entries,
-        sponsor_ranges=sponsor_ranges,
-    )
+    classifications_path = frames_dir / "classifications.json"
+    if classifications_path.exists():
+        logger.info("Process: %s frame classifications already exist, skipping", youtube_video_id)
+    else:
+        transcript_entries = parse_transcript(transcript_text)
+        extract_and_classify(
+            video=video_path,
+            output_dir=frames_dir,
+            transcript_entries=transcript_entries,
+            sponsor_ranges=sponsor_ranges,
+        )
     # Upload frame artifacts (classifications.json + per-frame llm_calls) before
     # the place-images branch. Run unconditionally — talking-head videos can yield
     # an empty kept set, but the classifications + call logs still need to land
     # on S3 for the runs viewer's audit trail.
     upload_run(youtube_video_id, step_dirs=["04_frames"])
 
-    # Step 5-6: Place images + annotate
+    # Step 5-6: Place images + annotate — skip if final already exists.
     place_dir = _step_dir(run_dir, "place_images")
+    final_path = place_dir / "essay_final.md"
     kept_dir = frames_dir / "kept"
-    classifications_path = frames_dir / "classifications.json"
     image_prefix = "../04_frames/kept/"
 
-    kept = load_kept_frames(classifications_path, kept_dir)
-    if kept:
-        with llm.run_context(place_dir):
-            with_images = place_images_in_essay(essay_text, kept, image_prefix)
-            annotated = annotate_essay(with_images)
-        # Rewrite relative image paths to public S3 URLs
-        prefix_pattern = re.escape(image_prefix)
-        def _to_s3_url(m: re.Match[str]) -> str:
-            alt, filename = m.group(1), Path(m.group(2)).name
-            url = get_public_url(f"runs/{youtube_video_id}/04_frames/kept/{filename}")
-            return f"![{alt}]({url})"
-        final_essay = re.sub(
-            rf"!\[(.*?)\]\(({prefix_pattern}frame_\d+\.jpg)\)",
-            _to_s3_url,
-            annotated,
-        )
+    if final_path.exists():
+        logger.info("Process: %s place_images already done, skipping", youtube_video_id)
     else:
-        final_essay = essay_text
-
-    (place_dir / "essay_final.md").write_text(final_essay)
+        kept = load_kept_frames(classifications_path, kept_dir)
+        if kept:
+            with llm.run_context(place_dir):
+                with_images = place_images_in_essay(essay_text, kept, image_prefix)
+                annotated = annotate_essay(with_images)
+            # Rewrite relative image paths to public S3 URLs
+            prefix_pattern = re.escape(image_prefix)
+            def _to_s3_url(m: re.Match[str]) -> str:
+                alt, filename = m.group(1), Path(m.group(2)).name
+                url = get_public_url(f"runs/{youtube_video_id}/04_frames/kept/{filename}")
+                return f"![{alt}]({url})"
+            final_essay = re.sub(
+                rf"!\[(.*?)\]\(({prefix_pattern}frame_\d+\.jpg)\)",
+                _to_s3_url,
+                annotated,
+            )
+        else:
+            final_essay = essay_text
+        final_path.write_text(final_essay)
 
     upload_run(youtube_video_id, step_dirs=[
         "01_transcript", "02_filter_sponsors", "03_essay", "05_place_images",

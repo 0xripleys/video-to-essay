@@ -195,7 +195,8 @@ def annotate_essay(
     numbered_essay, figures = _number_figures(essay_text)
 
     if not figures:
-        raise ValueError("No images found in essay. Nothing to annotate.")
+        logger.info("No images in essay; skipping annotation.")
+        return essay_text
 
     logger.info("Numbered %d figures. Adding references via LLM in batches of %d...", len(figures), batch_size)
 

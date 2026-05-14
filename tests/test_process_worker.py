@@ -222,3 +222,241 @@ def test_process_one_uploads_04_frames_when_frames_kept(
     assert flat.count("04_frames") == 1, (
         f"Expected exactly one upload of 04_frames; got step_dirs={step_dirs_uploaded}"
     )
+
+
+# -- Idempotency: each completed step is sticky across retries -----------------
+#
+# Before the per-step skip checks, a transient SSL error during frame
+# classification would re-run essay generation (~17 min of DeepSeek) plus
+# everything else on retry. These tests lock down that completed step outputs
+# are detected and the corresponding LLM helper is NOT re-invoked.
+
+
+def _seed_full_pipeline(run_dir: Path, *, with_classifications: bool = True,
+                        with_final_essay: bool = False) -> None:
+    """Seed every step's outputs so a re-run should be a complete no-op."""
+    _seed_inputs(run_dir)
+    (run_dir / "02_filter_sponsors").mkdir(parents=True)
+    (run_dir / "02_filter_sponsors" / "transcript_clean.txt").write_text("[00:00] hi")
+    (run_dir / "02_filter_sponsors" / "sponsor_segments.json").write_text("[]")
+    (run_dir / "03_essay").mkdir(parents=True)
+    (run_dir / "03_essay" / "essay.md").write_text(
+        "# Essay\n\n## Key Takeaways\n\n- one\n\n---\n\n## Transcript\n\nbody"
+    )
+    if with_classifications:
+        (run_dir / "04_frames" / "kept").mkdir(parents=True)
+        (run_dir / "04_frames" / "classifications.json").write_text("[]")
+    if with_final_essay:
+        (run_dir / "05_place_images").mkdir(parents=True)
+        (run_dir / "05_place_images" / "essay_final.md").write_text("# Essay")
+
+
+@patch("video_to_essay.process_worker.track")
+@patch("video_to_essay.process_worker.db")
+@patch("video_to_essay.process_worker.upload_run")
+@patch("video_to_essay.process_worker.download_run")
+@patch("video_to_essay.process_worker.summarize_essay")
+@patch("video_to_essay.process_worker.annotate_essay")
+@patch("video_to_essay.process_worker.place_images_in_essay")
+@patch("video_to_essay.process_worker.load_kept_frames")
+@patch("video_to_essay.process_worker.extract_and_classify")
+@patch("video_to_essay.process_worker.transcript_to_essay")
+@patch("video_to_essay.process_worker.filter_sponsors")
+@patch("video_to_essay.process_worker.transcribe_with_deepgram")
+def test_process_one_skips_filter_sponsors_when_outputs_exist(
+    mock_transcribe: MagicMock,
+    mock_filter: MagicMock,
+    mock_essay: MagicMock,
+    mock_extract: MagicMock,
+    mock_load_kept: MagicMock,
+    mock_place: MagicMock,
+    mock_annotate: MagicMock,
+    mock_summarize: MagicMock,
+    mock_download: MagicMock,
+    mock_upload: MagicMock,
+    mock_db: MagicMock,
+    mock_track: MagicMock,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from video_to_essay import process_worker
+
+    monkeypatch.setattr(process_worker, "RUNS_DIR", tmp_path)
+    video_id = "spVid"
+    run_dir = tmp_path / video_id
+    _seed_inputs(run_dir)
+    # Pre-seed sponsor outputs only
+    (run_dir / "02_filter_sponsors").mkdir(parents=True)
+    (run_dir / "02_filter_sponsors" / "transcript_clean.txt").write_text("[00:00] cleaned text")
+    (run_dir / "02_filter_sponsors" / "sponsor_segments.json").write_text("[[10, 20]]")
+
+    mock_transcribe.side_effect = lambda *a, **kw: None
+    mock_essay.return_value = "# Essay"
+    mock_extract.side_effect = _frames_side_effect_no_kept().side_effect
+    mock_load_kept.return_value = []
+    mock_summarize.side_effect = lambda *a, **kw: None
+
+    process_worker._process_one({
+        "id": "row-sp", "youtube_video_id": video_id, "video_title": "t",
+    })
+
+    mock_filter.assert_not_called()
+    # Sponsor ranges loaded from disk should be passed downstream as tuples
+    extract_call = mock_extract.call_args
+    assert extract_call.kwargs["sponsor_ranges"] == [(10, 20)]
+
+
+@patch("video_to_essay.process_worker.track")
+@patch("video_to_essay.process_worker.db")
+@patch("video_to_essay.process_worker.upload_run")
+@patch("video_to_essay.process_worker.download_run")
+@patch("video_to_essay.process_worker.summarize_essay")
+@patch("video_to_essay.process_worker.annotate_essay")
+@patch("video_to_essay.process_worker.place_images_in_essay")
+@patch("video_to_essay.process_worker.load_kept_frames")
+@patch("video_to_essay.process_worker.extract_and_classify")
+@patch("video_to_essay.process_worker.transcript_to_essay")
+@patch("video_to_essay.process_worker.filter_sponsors")
+@patch("video_to_essay.process_worker.transcribe_with_deepgram")
+def test_process_one_skips_essay_when_essay_md_exists(
+    mock_transcribe: MagicMock,
+    mock_filter: MagicMock,
+    mock_essay: MagicMock,
+    mock_extract: MagicMock,
+    mock_load_kept: MagicMock,
+    mock_place: MagicMock,
+    mock_annotate: MagicMock,
+    mock_summarize: MagicMock,
+    mock_download: MagicMock,
+    mock_upload: MagicMock,
+    mock_db: MagicMock,
+    mock_track: MagicMock,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from video_to_essay import process_worker
+
+    monkeypatch.setattr(process_worker, "RUNS_DIR", tmp_path)
+    video_id = "essVid"
+    run_dir = tmp_path / video_id
+    _seed_inputs(run_dir)
+    (run_dir / "03_essay").mkdir(parents=True)
+    pre_existing = "# Pre-existing essay\n\n## Key Takeaways\n\n- a\n\n---\n\n## Transcript\n\nx"
+    (run_dir / "03_essay" / "essay.md").write_text(pre_existing)
+
+    mock_transcribe.side_effect = lambda *a, **kw: None
+    mock_filter.return_value = ("[00:00] hi", [])
+    mock_extract.side_effect = _frames_side_effect_no_kept().side_effect
+    mock_load_kept.return_value = []
+    mock_summarize.side_effect = lambda *a, **kw: None
+
+    process_worker._process_one({
+        "id": "row-es", "youtube_video_id": video_id, "video_title": "t",
+    })
+
+    mock_essay.assert_not_called()
+    # essay.md should be untouched
+    assert (run_dir / "03_essay" / "essay.md").read_text() == pre_existing
+
+
+@patch("video_to_essay.process_worker.track")
+@patch("video_to_essay.process_worker.db")
+@patch("video_to_essay.process_worker.upload_run")
+@patch("video_to_essay.process_worker.download_run")
+@patch("video_to_essay.process_worker.summarize_essay")
+@patch("video_to_essay.process_worker.annotate_essay")
+@patch("video_to_essay.process_worker.place_images_in_essay")
+@patch("video_to_essay.process_worker.load_kept_frames")
+@patch("video_to_essay.process_worker.extract_and_classify")
+@patch("video_to_essay.process_worker.transcript_to_essay")
+@patch("video_to_essay.process_worker.filter_sponsors")
+@patch("video_to_essay.process_worker.transcribe_with_deepgram")
+def test_process_one_skips_extract_when_classifications_exist(
+    mock_transcribe: MagicMock,
+    mock_filter: MagicMock,
+    mock_essay: MagicMock,
+    mock_extract: MagicMock,
+    mock_load_kept: MagicMock,
+    mock_place: MagicMock,
+    mock_annotate: MagicMock,
+    mock_summarize: MagicMock,
+    mock_download: MagicMock,
+    mock_upload: MagicMock,
+    mock_db: MagicMock,
+    mock_track: MagicMock,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from video_to_essay import process_worker
+
+    monkeypatch.setattr(process_worker, "RUNS_DIR", tmp_path)
+    video_id = "frVid"
+    run_dir = tmp_path / video_id
+    _seed_inputs(run_dir)
+    (run_dir / "04_frames" / "kept").mkdir(parents=True)
+    (run_dir / "04_frames" / "classifications.json").write_text("[]")
+
+    mock_transcribe.side_effect = lambda *a, **kw: None
+    mock_filter.return_value = ("[00:00] hi", [])
+    mock_essay.return_value = "# Essay"
+    mock_load_kept.return_value = []
+    mock_summarize.side_effect = lambda *a, **kw: None
+
+    process_worker._process_one({
+        "id": "row-fr", "youtube_video_id": video_id, "video_title": "t",
+    })
+
+    mock_extract.assert_not_called()
+
+
+@patch("video_to_essay.process_worker.track")
+@patch("video_to_essay.process_worker.db")
+@patch("video_to_essay.process_worker.upload_run")
+@patch("video_to_essay.process_worker.download_run")
+@patch("video_to_essay.process_worker.summarize_essay")
+@patch("video_to_essay.process_worker.annotate_essay")
+@patch("video_to_essay.process_worker.place_images_in_essay")
+@patch("video_to_essay.process_worker.load_kept_frames")
+@patch("video_to_essay.process_worker.extract_and_classify")
+@patch("video_to_essay.process_worker.transcript_to_essay")
+@patch("video_to_essay.process_worker.filter_sponsors")
+@patch("video_to_essay.process_worker.transcribe_with_deepgram")
+def test_process_one_fully_idempotent_when_all_outputs_exist(
+    mock_transcribe: MagicMock,
+    mock_filter: MagicMock,
+    mock_essay: MagicMock,
+    mock_extract: MagicMock,
+    mock_load_kept: MagicMock,
+    mock_place: MagicMock,
+    mock_annotate: MagicMock,
+    mock_summarize: MagicMock,
+    mock_download: MagicMock,
+    mock_upload: MagicMock,
+    mock_db: MagicMock,
+    mock_track: MagicMock,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """The expensive case: a previous attempt completed all steps; this attempt
+    must touch zero LLMs and just upload + mark processed."""
+    from video_to_essay import process_worker
+
+    monkeypatch.setattr(process_worker, "RUNS_DIR", tmp_path)
+    video_id = "doneVid"
+    run_dir = tmp_path / video_id
+    _seed_full_pipeline(run_dir, with_classifications=True, with_final_essay=True)
+
+    mock_transcribe.side_effect = lambda *a, **kw: None
+    mock_summarize.side_effect = lambda *a, **kw: None
+
+    process_worker._process_one({
+        "id": "row-done", "youtube_video_id": video_id, "video_title": "t",
+    })
+
+    mock_filter.assert_not_called()
+    mock_essay.assert_not_called()
+    mock_extract.assert_not_called()
+    mock_place.assert_not_called()
+    mock_annotate.assert_not_called()
+    mock_load_kept.assert_not_called()
+    mock_db.mark_video_processed.assert_called_once_with("row-done")

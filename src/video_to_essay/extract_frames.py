@@ -15,6 +15,7 @@ import json
 import logging
 import re
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from video_to_essay import llm
@@ -164,16 +165,36 @@ def frame_timestamp(frame_path: Path, interval_seconds: int) -> str:
     return f"{minutes:02d}:{seconds:02d}"
 
 
+FRAME_CLASSIFY_WORKERS = 8
+
+
 def classify_frames(
     frames: list[Path],
     interval_seconds: int,
     transcript_entries: list[tuple[int, str]] | None = None,
     model: str | None = None,
+    max_workers: int = FRAME_CLASSIFY_WORKERS,
 ) -> list[dict[str, str | int]]:
-    """Send frames to a vision model for classification and relevance scoring."""
-    results: list[dict[str, str | int]] = []
+    """Send frames to a vision model for classification and relevance scoring.
 
-    for frame_path in frames:
+    Calls run concurrently in a thread pool because they're network-bound.
+    ContextVars don't propagate into worker threads, so capture the caller's
+    llm.run_context step_dir here and re-enter it inside each worker — this
+    keeps per-frame llm_calls/ JSON landing in the right place.
+    Output order matches input order.
+    """
+    if not frames:
+        return []
+
+    captured_step_dir = llm.current_step_dir()
+
+    def _classify_one(frame_path: Path) -> dict[str, str | int]:
+        if captured_step_dir is not None:
+            with llm.run_context(captured_step_dir):
+                return _do_classify(frame_path)
+        return _do_classify(frame_path)
+
+    def _do_classify(frame_path: Path) -> dict[str, str | int]:
         timestamp = frame_timestamp(frame_path, interval_seconds)
         b64 = encode_image_base64(frame_path)
 
@@ -234,7 +255,6 @@ def classify_frames(
         parsed["frame"] = frame_path.name
         parsed["timestamp"] = timestamp
         parsed["file"] = str(frame_path)
-        results.append(parsed)
 
         logger.info(
             "[%s] %s: %s (value=%s) - %s",
@@ -243,7 +263,15 @@ def classify_frames(
             parsed.get("description", "")[:80],
         )
 
-    return results
+        return parsed
+
+    by_path: dict[Path, dict[str, str | int]] = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        future_to_frame = {pool.submit(_classify_one, fp): fp for fp in frames}
+        for fut in as_completed(future_to_frame):
+            by_path[future_to_frame[fut]] = fut.result()
+
+    return [by_path[fp] for fp in frames]
 
 
 def _in_sponsor_range(
