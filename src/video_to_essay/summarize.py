@@ -74,8 +74,17 @@ def summarize_essay(
             max_tokens=1024,
         )
 
-    tool_call = response.choices[0].message.tool_calls[0]
-    tool_input = json.loads(tool_call.function.arguments)
+    tool_calls = response.choices[0].message.tool_calls
+    if not tool_calls:
+        content = response.choices[0].message.content or ""
+        logger.warning(
+            "Summarize: model declined to call key_takeaways tool; skipping takeaways. "
+            "Response content (first 200 chars): %r",
+            content[:200],
+        )
+        return
+
+    tool_input = json.loads(tool_calls[0].function.arguments)
     takeaways = tool_input["takeaways"][:5]
     bullets = "\n\n".join(f"- {t}" for t in takeaways)
 
