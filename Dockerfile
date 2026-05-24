@@ -9,8 +9,14 @@ ENV PYTHONUNBUFFERED=1 \
 
 COPY --from=uv /uv /uvx /usr/local/bin/
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
+RUN for attempt in 1 2 3; do \
+        apt-get update \
+        && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
+        && break; \
+        if [ "$attempt" = "3" ]; then exit 1; fi; \
+        rm -rf /var/lib/apt/lists/*; \
+        sleep 5; \
+    done \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml uv.lock .python-version ./
