@@ -1,10 +1,13 @@
 """Tests 39-40: discover_worker.py pure functions."""
 
 import pytest
+import httpx
 
 from video_to_essay.discover_worker import (
     _parse_iso8601_duration,
+    _raise_youtube_status,
     _uploads_playlist_id,
+    YouTubeAPIError,
 )
 
 
@@ -35,3 +38,17 @@ def test_uploads_playlist_id_short():
 )
 def test_parse_iso8601_duration(duration: str, expected: int):
     assert _parse_iso8601_duration(duration) == expected
+
+
+def test_raise_youtube_status_sanitizes_url_with_api_key():
+    request = httpx.Request(
+        "GET",
+        "https://www.googleapis.com/youtube/v3/playlistItems?key=secret-key",
+    )
+    response = httpx.Response(404, request=request)
+
+    with pytest.raises(YouTubeAPIError) as exc_info:
+        _raise_youtube_status(response, "uploads playlist lookup")
+
+    assert "secret-key" not in str(exc_info.value)
+    assert "HTTP 404" in str(exc_info.value)

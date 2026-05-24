@@ -16,6 +16,17 @@ PLAYLIST_ITEMS_URL = "https://www.googleapis.com/youtube/v3/playlistItems"
 VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
 
 
+class YouTubeAPIError(RuntimeError):
+    def __init__(self, operation: str, status_code: int) -> None:
+        self.status_code = status_code
+        super().__init__(f"{operation} failed with HTTP {status_code}")
+
+
+def _raise_youtube_status(resp: httpx.Response, operation: str) -> None:
+    if resp.is_error:
+        raise YouTubeAPIError(operation, resp.status_code)
+
+
 def _uploads_playlist_id(channel_id: str) -> str:
     """Convert a channel ID (UC...) to its uploads playlist ID (UU...)."""
     return "UU" + channel_id[2:]
@@ -34,7 +45,10 @@ def _video_in_playlist(video_id: str, playlist_id: str, api_key: str) -> bool:
         if page_token:
             params["pageToken"] = page_token
         resp = httpx.get(PLAYLIST_ITEMS_URL, params=params, timeout=30)
-        resp.raise_for_status()
+        if resp.status_code == 404:
+            logger.warning("Discover: playlist %s not found; treating as no match", playlist_id)
+            return False
+        _raise_youtube_status(resp, f"playlist lookup {playlist_id}")
         data = resp.json()
         for item in data.get("items", []):
             if item["snippet"]["resourceId"]["videoId"] == video_id:
@@ -110,7 +124,7 @@ def _classify_videos(video_ids: list[str], api_key: str) -> dict[str, VideoClass
             },
             timeout=30,
         )
-        resp.raise_for_status()
+        _raise_youtube_status(resp, "video classification")
         for item in resp.json().get("items", []):
             vid = item["id"]
             live_details = item.get("liveStreamingDetails")
@@ -164,7 +178,15 @@ def _check_channel(channel: dict, api_key: str) -> int:
             params["pageToken"] = page_token
 
         resp = httpx.get(PLAYLIST_ITEMS_URL, params=params, timeout=30)
-        resp.raise_for_status()
+        if resp.status_code == 404:
+            logger.warning(
+                "Discover: uploads playlist not found for channel %s (%s)",
+                channel.get("name", channel["id"]),
+                youtube_channel_id,
+            )
+            db.update_channel_checked(channel["id"])
+            return 0
+        _raise_youtube_status(resp, f"uploads playlist lookup {playlist_id}")
         data = resp.json()
 
         # Update channel name from first result if still a placeholder
