@@ -1,9 +1,13 @@
-FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim
+FROM ghcr.io/astral-sh/uv:latest AS uv
+
+FROM python:3.14.5-slim-bookworm
 
 WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1 \
     UV_LINK_MODE=copy
+
+COPY --from=uv /uv /uvx /usr/local/bin/
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
