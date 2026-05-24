@@ -22,6 +22,8 @@ RUNS_DIR = Path("runs")
 RAW_FRAME_INTERVAL_SECONDS = 5
 SOURCE_VIDEO_EXCLUDE_GLOBS = ["00_download/video.*"]
 YTDLP_COOKIES_FILE_ENV = "YTDLP_COOKIES_FILE"
+DOWNLOAD_WORKER_MIN_INTERVAL_SECONDS_ENV = "DOWNLOAD_WORKER_MIN_INTERVAL_SECONDS"
+DEFAULT_DOWNLOAD_WORKER_MIN_INTERVAL_SECONDS = 30.0
 
 
 def _cookies_file_from_env() -> str | None:
@@ -33,6 +35,32 @@ def _cookies_file_from_env() -> str | None:
     if not path.is_file():
         raise FileNotFoundError(f"{YTDLP_COOKIES_FILE_ENV} points to a missing file: {path}")
     return str(path)
+
+
+def _min_interval_from_env() -> float:
+    raw_value = os.environ.get(DOWNLOAD_WORKER_MIN_INTERVAL_SECONDS_ENV)
+    if raw_value in (None, ""):
+        return DEFAULT_DOWNLOAD_WORKER_MIN_INTERVAL_SECONDS
+    try:
+        value = float(raw_value)
+    except ValueError as exc:
+        raise ValueError(
+            f"{DOWNLOAD_WORKER_MIN_INTERVAL_SECONDS_ENV} must be a number of seconds"
+        ) from exc
+    if value < 0:
+        raise ValueError(f"{DOWNLOAD_WORKER_MIN_INTERVAL_SECONDS_ENV} must be non-negative")
+    return value
+
+
+def _wait_for_download_slot(last_attempt_at: float | None, min_interval_seconds: float) -> float:
+    """Wait until another yt-dlp attempt can start, then return the start time."""
+    if last_attempt_at is not None and min_interval_seconds > 0:
+        elapsed = time.monotonic() - last_attempt_at
+        remaining = min_interval_seconds - elapsed
+        if remaining > 0:
+            logger.info("Download throttle: sleeping %.1fs before next attempt", remaining)
+            time.sleep(remaining)
+    return time.monotonic()
 
 
 def _select_video_file(run_dir: Path) -> Path | None:
@@ -134,9 +162,18 @@ def download_loop(poll_interval: float = 10.0) -> None:
     init_sentry()
     init_logging()
     logger.info("Download worker started (polling every %ss)", poll_interval)
-    for key in ("DATABASE_URL", "S3_BUCKET_NAME", "PROXY_URL", YTDLP_COOKIES_FILE_ENV):
+    min_interval_seconds = _min_interval_from_env()
+    logger.info("Download worker minimum interval: %.1fs", min_interval_seconds)
+    for key in (
+        "DATABASE_URL",
+        "S3_BUCKET_NAME",
+        "PROXY_URL",
+        YTDLP_COOKIES_FILE_ENV,
+        DOWNLOAD_WORKER_MIN_INTERVAL_SECONDS_ENV,
+    ):
         val = os.environ.get(key)
         logger.info("  %s: %s", key, "set" if val else "NOT SET")
+    last_attempt_at: float | None = None
     while True:
         try:
             logger.debug("Polling...")
@@ -147,6 +184,10 @@ def download_loop(poll_interval: float = 10.0) -> None:
                 vid = video["youtube_video_id"]
                 logger.info("[%s] Starting download for %s", vid, video.get("youtube_url", vid))
                 try:
+                    last_attempt_at = _wait_for_download_slot(
+                        last_attempt_at,
+                        min_interval_seconds,
+                    )
                     _download_one(video)
                 except Exception:
                     sentry_sdk.capture_exception()

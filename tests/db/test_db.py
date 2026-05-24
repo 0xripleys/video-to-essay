@@ -151,6 +151,14 @@ def test_mark_video_downloaded(pg_container):
     assert v2["downloaded_at"] is not None
     assert v2["video_title"] == "Original"
 
+    # Successful retries clear previous download errors
+    vid3 = make_video()
+    db.mark_video_failed(vid3, "Download failed: bot check")
+    db.mark_video_downloaded(vid3)
+    v3 = db.get_video(vid3)
+    assert v3["downloaded_at"] is not None
+    assert v3["error"] is None
+
 
 # -- Test 53: mark_video_processed ------------------------------------------
 

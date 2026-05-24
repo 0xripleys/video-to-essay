@@ -415,7 +415,7 @@ def claim_next_video_for_processing(worker_id: str) -> dict[str, Any] | None:
 
 
 def mark_video_downloaded(video_id: str, video_title: str | None = None) -> None:
-    fields: dict[str, Any] = {"downloaded_at": _now()}
+    fields: dict[str, Any] = {"downloaded_at": _now(), "error": None}
     if video_title:
         fields["video_title"] = video_title
     _update_video(video_id, **fields)

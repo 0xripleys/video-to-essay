@@ -6,7 +6,12 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 from video_to_essay import db
-from video_to_essay.download_worker import _cookies_file_from_env, _download_one
+from video_to_essay.download_worker import (
+    _cookies_file_from_env,
+    _download_one,
+    _min_interval_from_env,
+    _wait_for_download_slot,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +137,58 @@ def test_cookies_file_from_env_rejects_missing_file(monkeypatch, tmp_path: Path)
         assert str(missing) in str(exc)
     else:
         raise AssertionError("missing cookies file should raise FileNotFoundError")
+
+
+def test_min_interval_from_env_defaults_to_30_seconds(monkeypatch):
+    monkeypatch.delenv("DOWNLOAD_WORKER_MIN_INTERVAL_SECONDS", raising=False)
+
+    assert _min_interval_from_env() == 30.0
+
+
+def test_min_interval_from_env_parses_non_negative_seconds(monkeypatch):
+    monkeypatch.setenv("DOWNLOAD_WORKER_MIN_INTERVAL_SECONDS", "12.5")
+
+    assert _min_interval_from_env() == 12.5
+
+
+def test_min_interval_from_env_rejects_invalid_values(monkeypatch):
+    monkeypatch.setenv("DOWNLOAD_WORKER_MIN_INTERVAL_SECONDS", "-1")
+
+    try:
+        _min_interval_from_env()
+    except ValueError as exc:
+        assert "DOWNLOAD_WORKER_MIN_INTERVAL_SECONDS" in str(exc)
+        assert "non-negative" in str(exc)
+    else:
+        raise AssertionError("negative min interval should raise ValueError")
+
+
+@patch("video_to_essay.download_worker.time.sleep")
+@patch("video_to_essay.download_worker.time.monotonic")
+def test_wait_for_download_slot_sleeps_remaining_interval(
+    mock_monotonic: MagicMock,
+    mock_sleep: MagicMock,
+):
+    mock_monotonic.side_effect = [100.0, 120.0]
+
+    started_at = _wait_for_download_slot(last_attempt_at=80.0, min_interval_seconds=30.0)
+
+    mock_sleep.assert_called_once_with(10.0)
+    assert started_at == 120.0
+
+
+@patch("video_to_essay.download_worker.time.sleep")
+@patch("video_to_essay.download_worker.time.monotonic")
+def test_wait_for_download_slot_does_not_sleep_when_interval_elapsed(
+    mock_monotonic: MagicMock,
+    mock_sleep: MagicMock,
+):
+    mock_monotonic.side_effect = [120.0, 120.0]
+
+    started_at = _wait_for_download_slot(last_attempt_at=80.0, min_interval_seconds=30.0)
+
+    mock_sleep.assert_not_called()
+    assert started_at == 120.0
 
 
 @patch("video_to_essay.download_worker.upload_run")

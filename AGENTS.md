@@ -143,6 +143,7 @@ All are stored in `.env` at the project root.
 | `AGENTMAIL_INBOX_ID` | Workers | AgentMail sender inbox |
 | `YOUTUBE_API_KEY` | Workers | YouTube Data API for polling new uploads |
 | `YTDLP_COOKIES_FILE` | Download worker | Path to a local Netscape-format cookies file for yt-dlp bot checks |
+| `DOWNLOAD_WORKER_MIN_INTERVAL_SECONDS` | Download worker | Minimum seconds between yt-dlp attempts, default `30` |
 | `WORKOS_API_KEY` | Web | Auth; unset enables dev mode |
 | `WORKOS_CLIENT_ID` | Web | Auth |
 | `WORKOS_COOKIE_PASSWORD` | Web | Session cookie encryption |
