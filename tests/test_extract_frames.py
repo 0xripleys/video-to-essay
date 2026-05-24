@@ -8,10 +8,12 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import imagehash
+import litellm
 import pytest
 from PIL import Image
 
 from video_to_essay.extract_frames import (
+    FRAME_CLASSIFY_MAX_ATTEMPTS,
     _in_sponsor_range,
     classify_sampled_frames,
     classify_frames,
@@ -22,6 +24,16 @@ from video_to_essay.extract_frames import (
     get_transcript_context,
     parse_transcript,
 )
+
+
+def _transient_api_error() -> litellm.APIError:
+    """The actual exception litellm raises for the SSL/transport failures we see in prod."""
+    return litellm.APIError(
+        status_code=500,
+        message="[SSL: SSLV3_ALERT_BAD_RECORD_MAC] ssl/tls alert bad record mac",
+        llm_provider="openrouter",
+        model="google/gemini-2.5-flash-lite",
+    )
 
 
 # -- Test 12: parse_transcript — single-speaker format -----------------------
@@ -298,3 +310,93 @@ def test_classify_sampled_frames_writes_kept_from_raw_dir(tmp_path, tiny_jpeg_by
     assert (out_dir / "classifications.json").exists()
     assert (out_dir / "kept" / "frame_0001.jpg").read_bytes() == tiny_jpeg_bytes
     assert not (out_dir / "kept" / "frame_0002.jpg").exists()
+
+
+# -- classify_frames: transient-error retry behavior --------------------------
+
+def test_classify_frames_retries_transient_error_then_succeeds(tmp_path, tiny_jpeg_bytes):
+    """A TLS hiccup on the first attempt must not abort the call — retry and succeed."""
+    frames = _seed_frames(tmp_path, 1, tiny_jpeg_bytes)
+    calls = [0]
+
+    def flaky(*, task, messages, **_kwargs):
+        calls[0] += 1
+        if calls[0] < FRAME_CLASSIFY_MAX_ATTEMPTS:
+            raise _transient_api_error()
+        return _mock_response('{"category": "slide", "value": 4, "description": "ok"}')
+
+    with patch("video_to_essay.extract_frames.llm.complete", side_effect=flaky), \
+         patch("video_to_essay.extract_frames.time.sleep") as mock_sleep:
+        results = classify_frames(frames, interval_seconds=5, max_workers=1)
+
+    assert calls[0] == FRAME_CLASSIFY_MAX_ATTEMPTS
+    assert len(results) == 1
+    assert results[0]["category"] == "slide"
+    assert results[0]["value"] == 4
+    # Backoff: we sleep between attempts but not after the last one.
+    assert mock_sleep.call_count == FRAME_CLASSIFY_MAX_ATTEMPTS - 1
+
+
+def test_classify_frames_fallback_after_exhausting_retries(tmp_path, tiny_jpeg_bytes):
+    """When every retry hits a transient error, return a low-value placeholder
+    rather than letting the exception bubble up and kill the whole batch."""
+    frames = _seed_frames(tmp_path, 1, tiny_jpeg_bytes)
+
+    def always_fail(*, task, messages, **_kwargs):
+        raise _transient_api_error()
+
+    with patch("video_to_essay.extract_frames.llm.complete", side_effect=always_fail), \
+         patch("video_to_essay.extract_frames.time.sleep"):
+        results = classify_frames(frames, interval_seconds=5, max_workers=1)
+
+    assert len(results) == 1
+    # value=0 means downstream min_value filter drops this frame — exactly what we want.
+    assert results[0]["value"] == 0
+    assert results[0]["category"] == "unknown"
+    assert results[0]["frame"] == frames[0].name
+
+
+def test_classify_frames_one_bad_frame_does_not_abort_batch(tmp_path, tiny_jpeg_bytes):
+    """The whole point of the retry: a single misbehaving frame leaves siblings intact."""
+    frames = _seed_frames(tmp_path, 3, tiny_jpeg_bytes)
+    calls = [0]
+
+    # With max_workers=1 the executor processes frames in submission order:
+    # frame[0] -> call 1 (success)
+    # frame[1] -> calls 2..(1+MAX) (all fail -> fallback)
+    # frame[2] -> next call (success)
+    fail_lo = 2
+    fail_hi = 1 + FRAME_CLASSIFY_MAX_ATTEMPTS
+
+    def maybe_fail(*, task, messages, **_kwargs):
+        calls[0] += 1
+        if fail_lo <= calls[0] <= fail_hi:
+            raise _transient_api_error()
+        return _mock_response('{"category": "slide", "value": 4, "description": "ok"}')
+
+    with patch("video_to_essay.extract_frames.llm.complete", side_effect=maybe_fail), \
+         patch("video_to_essay.extract_frames.time.sleep"):
+        results = classify_frames(frames, interval_seconds=5, max_workers=1)
+
+    assert len(results) == 3
+    assert results[0]["category"] == "slide"
+    assert results[0]["value"] == 4
+    # Middle frame: retries exhausted, fallback placeholder.
+    assert results[1]["value"] == 0
+    assert results[1]["category"] == "unknown"
+    # Last frame: unaffected by the failure in the middle.
+    assert results[2]["category"] == "slide"
+    assert results[2]["value"] == 4
+
+
+def test_classify_frames_non_transient_error_propagates(tmp_path, tiny_jpeg_bytes):
+    """Don't swallow programming errors — only transient provider failures should be retried."""
+    frames = _seed_frames(tmp_path, 1, tiny_jpeg_bytes)
+
+    def boom(*, task, messages, **_kwargs):
+        raise ValueError("not a transient provider error")
+
+    with patch("video_to_essay.extract_frames.llm.complete", side_effect=boom), \
+         patch("video_to_essay.extract_frames.time.sleep"):
+        with pytest.raises(ValueError, match="not a transient"):
+            classify_frames(frames, interval_seconds=5, max_workers=1)

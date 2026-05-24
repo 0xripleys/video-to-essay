@@ -15,15 +15,32 @@ import json
 import logging
 import re
 import subprocess
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Any
 
 from video_to_essay import llm
 import cv2
 import imagehash
+import litellm
 from PIL import Image
 
 logger = logging.getLogger(__name__)
+
+# Transient errors from the vision provider — TLS hiccups, 5xx, rate limits,
+# read timeouts. On a 6000-frame batch even a 0.05% per-call failure rate is
+# near-certain to bite, so we retry the individual call rather than letting
+# one bad connection take down the whole step.
+_TRANSIENT_LLM_ERRORS: tuple[type[BaseException], ...] = (
+    litellm.APIError,
+    litellm.APIConnectionError,
+    litellm.RateLimitError,
+    litellm.ServiceUnavailableError,
+    litellm.Timeout,
+    litellm.InternalServerError,
+)
+FRAME_CLASSIFY_MAX_ATTEMPTS = 3
 
 
 def parse_transcript(transcript: str) -> list[tuple[int, str]]:
@@ -168,6 +185,41 @@ def frame_timestamp(frame_path: Path, interval_seconds: int) -> str:
 FRAME_CLASSIFY_WORKERS = 8
 
 
+def _classify_one_call(
+    messages: list[dict[str, Any]],
+    model: str | None,
+) -> Any | None:
+    """One frame_classify call, retried on transient provider errors.
+
+    Returns the litellm response, or None if all attempts are exhausted —
+    callers substitute a fallback dict so one TLS hiccup doesn't abort the
+    batch.
+    """
+    last_err: BaseException | None = None
+    for attempt in range(1, FRAME_CLASSIFY_MAX_ATTEMPTS + 1):
+        try:
+            return llm.complete(
+                task="frame_classify",
+                model=model,
+                max_tokens=256,
+                messages=messages,
+            )
+        except _TRANSIENT_LLM_ERRORS as e:
+            last_err = e
+            if attempt >= FRAME_CLASSIFY_MAX_ATTEMPTS:
+                break
+            logger.warning(
+                "frame_classify transient error (attempt %d/%d): %s — retrying in %ds",
+                attempt, FRAME_CLASSIFY_MAX_ATTEMPTS, e, attempt,
+            )
+            time.sleep(attempt)
+    logger.warning(
+        "frame_classify: giving up after %d attempts (%s)",
+        FRAME_CLASSIFY_MAX_ATTEMPTS, last_err,
+    )
+    return None
+
+
 def classify_frames(
     frames: list[Path],
     interval_seconds: int,
@@ -211,36 +263,44 @@ def classify_frames(
                 f'"{context}"'
             )
 
-        response = llm.complete(
-            task="frame_classify",
-            model=model,
-            max_tokens=256,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{b64}",
-                            },
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{b64}",
                         },
-                        {
-                            "type": "text",
-                            "text": (
-                                "Classify this video frame. Respond with ONLY valid JSON, no other text.\n\n"
-                                "{\n"
-                                '  "category": one of "slide", "chart", "code", "diagram", "key_moment", "talking_head", "transition", "advertisement", "other",\n'
-                                '  "value": 1-5 (5 = essential visual information for an essay about this video),\n'
-                                '  "description": brief description of what the frame shows and how it relates to what is being discussed\n'
-                                "}"
-                                f"{context_block}"
-                            ),
-                        },
-                    ],
-                }
-            ],
-        )
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            "Classify this video frame. Respond with ONLY valid JSON, no other text.\n\n"
+                            "{\n"
+                            '  "category": one of "slide", "chart", "code", "diagram", "key_moment", "talking_head", "transition", "advertisement", "other",\n'
+                            '  "value": 1-5 (5 = essential visual information for an essay about this video),\n'
+                            '  "description": brief description of what the frame shows and how it relates to what is being discussed\n'
+                            "}"
+                            f"{context_block}"
+                        ),
+                    },
+                ],
+            }
+        ]
+
+        response = _classify_one_call(messages, model)
+        if response is None:
+            # Retries exhausted; record a low-value placeholder so this single
+            # frame just gets filtered out by the min_value gate downstream.
+            return {
+                "frame": frame_path.name,
+                "timestamp": timestamp,
+                "file": str(frame_path),
+                "category": "unknown",
+                "value": 0,
+                "description": "classification failed after retries",
+            }
 
         raw = response.choices[0].message.content.strip()
         # Handle markdown code blocks
