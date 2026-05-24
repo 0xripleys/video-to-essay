@@ -170,6 +170,24 @@ def test_mark_video_failed(pg_container):
     assert v["error"] == "download error"
 
 
+def test_mark_video_needs_download_clears_processing_state(raw_conn):
+    vid = make_video()
+    db.mark_video_downloaded(vid)
+    claimed = db.claim_next_video_for_processing("worker-a")
+    assert claimed is not None
+    db.mark_video_failed(vid, "missing prepared media")
+
+    db.mark_video_needs_download(vid)
+
+    v = db.get_video(vid)
+    assert v["downloaded_at"] is None
+    assert v["processing_started_at"] is None
+    assert v["processing_worker_id"] is None
+    assert v["error"] is None
+    pending = db.get_videos_pending_download()
+    assert vid in [row["id"] for row in pending]
+
+
 # -- Test 55: deactivate_subscription ---------------------------------------
 
 def test_deactivate_subscription(pg_container):

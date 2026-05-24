@@ -421,6 +421,16 @@ def mark_video_downloaded(video_id: str, video_title: str | None = None) -> None
     _update_video(video_id, **fields)
 
 
+def mark_video_needs_download(video_id: str) -> None:
+    _update_video(
+        video_id,
+        downloaded_at=None,
+        processing_started_at=None,
+        processing_worker_id=None,
+        error=None,
+    )
+
+
 def mark_video_processed(video_id: str) -> None:
     _update_video(video_id, processed_at=_now())
 

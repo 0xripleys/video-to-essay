@@ -69,6 +69,10 @@ STEP_DIRS: dict[str, str] = {
 }
 
 
+class PreparedDownloadMissing(RuntimeError):
+    """Raised when a downloaded row predates the prepared media handoff."""
+
+
 def _step_dir(run_dir: Path, step: str) -> Path:
     d = run_dir / STEP_DIRS[step]
     d.mkdir(parents=True, exist_ok=True)
@@ -141,6 +145,8 @@ def _process_one(video: dict) -> None:
     # Step 1: Transcript (transcribe_audio_with_deepgram has its own force=False skip)
     transcript_dir = _step_dir(run_dir, "transcript")
     audio_path = dl_dir / "audio.mp3"
+    if not audio_path.exists():
+        raise PreparedDownloadMissing(f"Prepared audio file not found: {audio_path}")
     transcribe_audio_with_deepgram(audio_path, transcript_dir, meta, force=False)
     transcript_text = (transcript_dir / "transcript.txt").read_text()
 
@@ -180,7 +186,7 @@ def _process_one(video: dict) -> None:
     else:
         raw_frames_dir = dl_dir / "raw_frames"
         if not any(raw_frames_dir.glob("frame_*.jpg")):
-            raise RuntimeError(
+            raise PreparedDownloadMissing(
                 f"Prepared download bundle missing raw frames in {raw_frames_dir}"
             )
         transcript_entries = parse_transcript(transcript_text)
@@ -252,6 +258,13 @@ def _process_pending_once(worker_id: str) -> bool:
             _process_one(video)
             break
         except Exception as exc:
+            if isinstance(exc, PreparedDownloadMissing):
+                logger.warning(
+                    "Process: %s missing prepared media; requeueing for download",
+                    video["youtube_video_id"],
+                )
+                db.mark_video_needs_download(video["id"])
+                break
             if _is_transient_error(exc):
                 _handle_transient_failure(video, attempt)
                 continue

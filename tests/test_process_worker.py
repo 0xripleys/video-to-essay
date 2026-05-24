@@ -157,6 +157,32 @@ def test_process_pending_once_marks_non_transient_failure(
     assert "Processing failed:" in mock_db.mark_video_failed.call_args.args[1]
 
 
+@patch("video_to_essay.process_worker.sentry_sdk.capture_exception")
+@patch("video_to_essay.process_worker._process_one")
+@patch("video_to_essay.process_worker.db")
+def test_process_pending_once_requeues_missing_prepared_media(
+    mock_db: MagicMock,
+    mock_process_one: MagicMock,
+    mock_capture: MagicMock,
+) -> None:
+    from video_to_essay.process_worker import PreparedDownloadMissing, _process_pending_once
+
+    video = {
+        "id": "row-1",
+        "youtube_video_id": "video-1",
+        "video_title": "Claimed video",
+    }
+    mock_db.claim_next_video_for_processing.return_value = video
+    mock_process_one.side_effect = PreparedDownloadMissing("missing audio")
+
+    claimed = _process_pending_once("worker-a")
+
+    assert claimed is True
+    mock_capture.assert_not_called()
+    mock_db.mark_video_needs_download.assert_called_once_with("row-1")
+    mock_db.mark_video_failed.assert_not_called()
+
+
 @patch("video_to_essay.process_worker.track")
 @patch("video_to_essay.process_worker.db")
 @patch("video_to_essay.process_worker.upload_run")
