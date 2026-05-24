@@ -41,11 +41,15 @@ def make_video(channel_id: str | None = None, **kw) -> dict:
 
 
 @patch("video_to_essay.download_worker.upload_run")
+@patch("video_to_essay.download_worker.sample_frames")
+@patch("video_to_essay.download_worker.extract_audio")
 @patch("video_to_essay.download_worker.fetch_video_metadata")
 @patch("video_to_essay.download_worker.download_video")
 def test_download_one_happy_path(
     mock_download: MagicMock,
     mock_metadata: MagicMock,
+    mock_extract_audio: MagicMock,
+    mock_sample_frames: MagicMock,
     mock_upload: MagicMock,
     pg_container,
     tmp_path: Path,
@@ -56,14 +60,41 @@ def test_download_one_happy_path(
     mock_metadata.return_value = {"title": "My Video", "channel": "Test"}
 
     with patch("video_to_essay.download_worker.RUNS_DIR", tmp_path):
+        run_dir = tmp_path / video["youtube_video_id"] / "00_download"
+
+        def fake_download(video_id, output_dir):
+            video_path = output_dir / "video.mp4"
+            video_path.write_bytes(b"fake video data")
+            return video_path
+
+        def fake_extract_audio(video_path, output_dir):
+            audio_path = output_dir / "audio.mp3"
+            audio_path.write_bytes(b"fake audio")
+            return audio_path
+
+        def fake_sample_frames(video_path, output_dir, interval_seconds):
+            frame_path = output_dir / "frame_0001.jpg"
+            frame_path.write_bytes(b"fake frame")
+            return [frame_path]
+
+        mock_download.side_effect = fake_download
+        mock_extract_audio.side_effect = fake_extract_audio
+        mock_sample_frames.side_effect = fake_sample_frames
+
         _download_one(video)
 
     # download_video called with the youtube video id
     mock_download.assert_called_once()
     assert mock_download.call_args[0][0] == video["youtube_video_id"]
+    mock_extract_audio.assert_called_once_with(run_dir / "video.mp4", run_dir)
+    mock_sample_frames.assert_called_once_with(run_dir / "video.mp4", run_dir / "raw_frames", 5)
 
     # S3 upload called
-    mock_upload.assert_called_once_with(video["youtube_video_id"], step_dirs=["00_download"])
+    mock_upload.assert_called_once_with(
+        video["youtube_video_id"],
+        step_dirs=["00_download"],
+        exclude_globs=["00_download/video.*"],
+    )
 
     # Video marked as downloaded in db
     updated = db.get_video(video["id"])
@@ -75,6 +106,8 @@ def test_download_one_happy_path(
     assert meta_path.exists()
     meta = json.loads(meta_path.read_text())
     assert meta["title"] == "My Video"
+    assert (tmp_path / video["youtube_video_id"] / "00_download" / "audio.mp3").exists()
+    assert (tmp_path / video["youtube_video_id"] / "00_download" / "raw_frames" / "frame_0001.jpg").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +116,8 @@ def test_download_one_happy_path(
 
 
 @patch("video_to_essay.download_worker.upload_run")
+@patch("video_to_essay.download_worker.sample_frames")
+@patch("video_to_essay.download_worker.extract_audio")
 @patch("video_to_essay.download_worker.fetch_video_metadata")
 @patch("video_to_essay.download_worker.download_video")
 @patch("subprocess.run")
@@ -90,6 +125,8 @@ def test_download_one_skips_when_cached_with_audio(
     mock_ffprobe: MagicMock,
     mock_download: MagicMock,
     mock_metadata: MagicMock,
+    mock_extract_audio: MagicMock,
+    mock_sample_frames: MagicMock,
     mock_upload: MagicMock,
     pg_container,
     tmp_path: Path,
@@ -106,6 +143,19 @@ def test_download_one_skips_when_cached_with_audio(
     mock_ffprobe.return_value = MagicMock(stdout="audio\n")
     mock_metadata.return_value = {"title": "Cached Video"}
 
+    def fake_extract_audio(video_path, output_dir):
+        audio_path = output_dir / "audio.mp3"
+        audio_path.write_bytes(b"fake audio")
+        return audio_path
+
+    def fake_sample_frames(video_path, output_dir, interval_seconds):
+        frame_path = output_dir / "frame_0001.jpg"
+        frame_path.write_bytes(b"fake frame")
+        return [frame_path]
+
+    mock_extract_audio.side_effect = fake_extract_audio
+    mock_sample_frames.side_effect = fake_sample_frames
+
     with patch("video_to_essay.download_worker.RUNS_DIR", tmp_path):
         _download_one(video)
 
@@ -113,6 +163,10 @@ def test_download_one_skips_when_cached_with_audio(
     mock_download.assert_not_called()
 
     # But S3 upload and mark_downloaded still happen
-    mock_upload.assert_called_once()
+    mock_upload.assert_called_once_with(
+        video["youtube_video_id"],
+        step_dirs=["00_download"],
+        exclude_globs=["00_download/video.*"],
+    )
     updated = db.get_video(video["id"])
     assert updated["downloaded_at"] is not None

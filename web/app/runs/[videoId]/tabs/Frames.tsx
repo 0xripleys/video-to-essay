@@ -37,18 +37,20 @@ const CATEGORY_COLOR: Record<string, string> = {
   other: "bg-stone-100 text-stone-600",
 };
 
-function frameUrl(videoId: string, frameName: string): string {
-  return `/api/runs/${videoId}/files/raw?path=${encodeURIComponent(`04_frames/raw/${frameName}`)}`;
+function frameUrl(videoId: string, rawFramePrefix: string, frameName: string): string {
+  return `/api/runs/${videoId}/files/raw?path=${encodeURIComponent(`${rawFramePrefix}/${frameName}`)}`;
 }
 
 export default function Frames({
   videoId,
   classificationsJson,
   keptFrames,
+  rawFramePrefix,
 }: {
   videoId: string;
   classificationsJson: string | null;
   keptFrames: string[];
+  rawFramePrefix: string;
 }) {
   const [filter, setFilter] = useState<"all" | "kept" | "rejected">("all");
   const [activeCategories, setActiveCategories] = useState<Set<string>>(new Set());
@@ -168,7 +170,7 @@ export default function Frames({
         {visible.map((c) => {
           const isKept = keptSet.has(c.frame);
           const reason = isKept ? null : rejectionReason(c);
-          const url = frameUrl(videoId, c.frame);
+          const url = frameUrl(videoId, rawFramePrefix, c.frame);
           return (
             <button
               key={c.frame}
@@ -227,7 +229,7 @@ export default function Frames({
             onClick={(e) => e.stopPropagation()}
           >
             <img
-              src={frameUrl(videoId, expanded.frame)}
+              src={frameUrl(videoId, rawFramePrefix, expanded.frame)}
               alt={expanded.description ?? expanded.frame}
               className="max-h-[60vh] w-full rounded object-contain"
             />

@@ -75,10 +75,10 @@ Two systems share a Supabase Postgres database:
 discover (60s) -> download (10s) -> process (10s) -> deliver (15s)
    |                  |                |                |
    | YouTube API poll | yt-dlp         | transcript ->  | create subscription
-   | -> new rows      | -> video file  | sponsors ->    | delivery rows
-   |                  | -> metadata    | essay ->       | -> send via AgentMail
-   |                  |                | frames ->      |
-   |                  |                | place images   |
+   | -> new rows      | -> metadata    | sponsors ->    | delivery rows
+   |                  | -> audio       | essay ->       | -> send via AgentMail
+   |                  | -> raw frames  | classify frames|
+   |                  |                | -> place images|
 ```
 
 ### CLI Pipeline
@@ -97,13 +97,13 @@ Each step is idempotent and skips existing output unless `--force` is passed. Ea
 - `src/video_to_essay/db.py` owns the Postgres schema and Python-side DB queries.
 - `src/video_to_essay/worker.py` starts all four worker threads.
 - `src/video_to_essay/discover_worker.py` polls the YouTube Data API for new videos on subscribed channels.
-- `src/video_to_essay/download_worker.py` downloads videos with `yt-dlp`.
-- `src/video_to_essay/process_worker.py` runs the full pipeline.
+- `src/video_to_essay/download_worker.py` downloads videos with `yt-dlp`, extracts `00_download/audio.mp3`, samples `00_download/raw_frames/`, and uploads the prepared handoff without source `video.*` files.
+- `src/video_to_essay/process_worker.py` runs the API/LLM pipeline from the prepared `00_download/` handoff.
 - `src/video_to_essay/deliver_worker.py` creates subscription delivery rows and sends emails through AgentMail.
 - `src/video_to_essay/diarize.py` handles Deepgram transcription and speaker diarization.
 - `src/video_to_essay/transcriber.py` handles essay generation and video download.
 - `src/video_to_essay/filter_sponsors.py` uses DeepSeek to detect sponsor segments.
-- `src/video_to_essay/extract_frames.py` handles frame sampling, pHash deduplication, and Gemini Flash Lite classification.
+- `src/video_to_essay/extract_frames.py` handles frame sampling, pHash deduplication, and Gemini Flash Lite classification. Worker processing classifies existing `00_download/raw_frames/`; the CLI wrapper still samples into `04_frames/raw/`.
 - `src/video_to_essay/place_images.py` uses DeepSeek to place images and annotate figures.
 - `src/video_to_essay/scorer.py` performs LLM-as-judge essay quality evaluation.
 - `src/video_to_essay/email_sender.py` converts markdown to HTML email and sends through AgentMail.
@@ -124,7 +124,7 @@ Each step is idempotent and skips existing output unless `--force` is passed. Ea
 - LLM calls: all routed through `src/video_to_essay/llm.py`, a thin LiteLLM wrapper. Persistent model defaults live in the `MODELS` dict at the top of that file. Current production defaults use DeepSeek V3.1 via OpenRouter for text tasks and image placement, Gemini Flash Lite via OpenRouter for frame classification, and Sonnet for explicit scoring/evaluation. For ad-hoc experiments, pass `--model <litellm-string>` to supported single-step CLI subcommands.
 - LLM call logs: each call is persisted as JSON to `<step_dir>/llm_calls/`. Base64 image bytes are stripped to sha256 and size references to avoid duplicating frames already on S3.
 - Deepgram: `DEEPGRAM_API_KEY` is required for transcription. The project uses Nova-3 with diarization.
-- YouTube: `yt-dlp` uses `--remote-components ejs:github` for JS challenges. Cloud IPs need `--cookies`. `ffmpeg` and `deno` must be on `PATH`.
+- YouTube: `yt-dlp` uses `--remote-components ejs:github` for JS challenges. Cloud IPs need `--cookies`. `ffmpeg` and `deno` must be on `PATH` for the download worker and local CLI runs; the cloud process worker consumes prepared audio and raw frames.
 - Email: AgentMail sends HTML essays with plaintext fallback. Subject format is `{Channel Name}: {Video Title}`.
 - Images in emails: the worker pipeline uploads frames to S3 and rewrites image paths to public S3 URLs before saving `essay_final.md`. The CLI pipeline uses base64 data URIs through `embed_images()`.
 - Worker failures: workers set `error` on the video or delivery row and move on. There is no automatic retry mechanism.
@@ -157,7 +157,7 @@ All are stored in `.env` at the project root.
 
 ## Dependencies Beyond pip/npm
 
-- `ffmpeg` for audio extraction and frame sampling.
+- `ffmpeg` for download-worker media prep and local CLI audio/frame extraction.
 - `deno` for `yt-dlp` YouTube JavaScript challenges.
 
 ## Agent Notes

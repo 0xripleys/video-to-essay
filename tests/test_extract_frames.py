@@ -13,6 +13,7 @@ from PIL import Image
 
 from video_to_essay.extract_frames import (
     _in_sponsor_range,
+    classify_sampled_frames,
     classify_frames,
     dedup_frames,
     encode_image_base64,
@@ -253,3 +254,47 @@ def test_classify_frames_empty_input(tmp_path):
     with patch("video_to_essay.extract_frames.llm.complete") as mock_complete:
         assert classify_frames([], interval_seconds=5) == []
         assert mock_complete.call_count == 0
+
+
+def test_classify_sampled_frames_writes_kept_from_raw_dir(tmp_path, tiny_jpeg_bytes):
+    """Classify existing samples without re-running ffmpeg sampling."""
+    raw_dir = tmp_path / "raw_frames"
+    raw_dir.mkdir()
+    frame_one = raw_dir / "frame_0001.jpg"
+    frame_two = raw_dir / "frame_0002.jpg"
+    frame_one.write_bytes(tiny_jpeg_bytes)
+    frame_two.write_bytes(tiny_jpeg_bytes)
+
+    out_dir = tmp_path / "04_frames"
+    classifications = [
+        {
+            "frame": "frame_0001.jpg",
+            "timestamp": "00:00",
+            "category": "slide",
+            "value": 4,
+            "description": "useful slide",
+            "file": str(frame_one),
+        },
+        {
+            "frame": "frame_0002.jpg",
+            "timestamp": "00:05",
+            "category": "talking_head",
+            "value": 1,
+            "description": "speaker",
+            "file": str(frame_two),
+        },
+    ]
+
+    with (
+        patch("video_to_essay.extract_frames.compute_hashes", return_value={}),
+        patch("video_to_essay.extract_frames.dedup_frames", return_value=[frame_one, frame_two]),
+        patch("video_to_essay.extract_frames.classify_frames", return_value=classifications),
+        patch("video_to_essay.extract_frames.sample_frames") as mock_sample,
+    ):
+        kept = classify_sampled_frames(raw_dir, out_dir)
+
+    mock_sample.assert_not_called()
+    assert [item["frame"] for item in kept] == ["frame_0001.jpg"]
+    assert (out_dir / "classifications.json").exists()
+    assert (out_dir / "kept" / "frame_0001.jpg").read_bytes() == tiny_jpeg_bytes
+    assert not (out_dir / "kept" / "frame_0002.jpg").exists()

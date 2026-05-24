@@ -11,12 +11,55 @@ from pathlib import Path
 import sentry_sdk
 
 from . import db
+from .diarize import extract_audio
+from .extract_frames import sample_frames
 from .s3 import upload_run
 from .transcriber import download_video, fetch_video_metadata
 
 logger = logging.getLogger(__name__)
 
 RUNS_DIR = Path("runs")
+RAW_FRAME_INTERVAL_SECONDS = 5
+SOURCE_VIDEO_EXCLUDE_GLOBS = ["00_download/video.*"]
+
+
+def _select_video_file(run_dir: Path) -> Path | None:
+    """Find a completed yt-dlp video file, preferring clean merged names."""
+    import re as _re
+    all_existing = [f for f in sorted(run_dir.glob("video.*")) if not f.name.endswith(".part")]
+    if not all_existing:
+        return None
+    candidates = [f for f in all_existing if not _re.search(r"\.f\d+\.", f.name)] or all_existing
+    return candidates[0]
+
+
+def _has_audio_stream(video_path: Path) -> bool:
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "a",
+         "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(video_path)],
+        capture_output=True, text=True, timeout=30,
+    )
+    return bool(probe.stdout.strip())
+
+
+def _ensure_prepared_media(video_id: str, video_path: Path, run_dir: Path) -> None:
+    """Create the process-worker media handoff under 00_download."""
+    audio_path = extract_audio(video_path, run_dir)
+    if not audio_path.exists():
+        raise RuntimeError(f"[{video_id}] Audio prep did not create {audio_path}")
+
+    raw_frames_dir = run_dir / "raw_frames"
+    existing_frames = sorted(raw_frames_dir.glob("frame_*.jpg")) if raw_frames_dir.exists() else []
+    if existing_frames:
+        logger.info("[%s] Raw frames already exist, skipping sampling", video_id)
+    else:
+        logger.info("[%s] Sampling raw frames...", video_id)
+        raw_frames_dir.mkdir(parents=True, exist_ok=True)
+        sample_frames(video_path, raw_frames_dir, RAW_FRAME_INTERVAL_SECONDS)
+        logger.info("[%s] Raw frame sampling complete", video_id)
+
+    if not any(raw_frames_dir.glob("frame_*.jpg")):
+        raise RuntimeError(f"[{video_id}] Raw frame prep did not create frames in {raw_frames_dir}")
 
 
 def _download_one(video: dict) -> None:
@@ -31,25 +74,18 @@ def _download_one(video: dict) -> None:
         part_file.unlink()
 
     # Skip if already downloaded locally (exclude .part files), but validate audio
-    import re as _re
-    all_existing = [f for f in sorted(run_dir.glob("video.*")) if not f.name.endswith(".part")]
-    existing = [f for f in all_existing if not _re.search(r"\.f\d+\.", f.name)] or all_existing
-    if existing:
-        probe = subprocess.run(
-            ["ffprobe", "-v", "error", "-select_streams", "a",
-             "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(existing[0])],
-            capture_output=True, text=True, timeout=30,
-        )
-        if probe.stdout.strip():
+    video_path = _select_video_file(run_dir)
+    if video_path:
+        if _has_audio_stream(video_path):
             logger.info("[%s] Video already exists locally with audio, skipping download", video_id)
         else:
             logger.info("[%s] Cached file has no audio stream, re-downloading...", video_id)
-            existing[0].unlink()
-            download_video(video_id, run_dir)
+            video_path.unlink()
+            video_path = download_video(video_id, run_dir)
             logger.info("[%s] Download complete", video_id)
     else:
         logger.info("[%s] Downloading video...", video_id)
-        download_video(video_id, run_dir)
+        video_path = download_video(video_id, run_dir)
         logger.info("[%s] Download complete", video_id)
 
     # Save metadata
@@ -64,6 +100,9 @@ def _download_one(video: dict) -> None:
             logger.warning("[%s] Metadata fetch failed: %s", video_id, e)
         meta_path.write_text(json.dumps(meta, indent=2))
 
+    logger.info("[%s] Preparing audio and raw frame handoff...", video_id)
+    _ensure_prepared_media(video_id, video_path, run_dir)
+
     # Get title from metadata
     title = video.get("video_title")
     if not title and meta_path.exists():
@@ -71,7 +110,7 @@ def _download_one(video: dict) -> None:
         title = meta_data.get("title")
 
     logger.info("[%s] Uploading to S3...", video_id)
-    upload_run(video_id, step_dirs=["00_download"])
+    upload_run(video_id, step_dirs=["00_download"], exclude_globs=SOURCE_VIDEO_EXCLUDE_GLOBS)
     db.mark_video_downloaded(video["id"], video_title=title)
     logger.info("[%s] Done (%s)", video_id, title or "untitled")
 

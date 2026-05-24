@@ -301,9 +301,6 @@ def extract_and_classify(
 
     Returns the list of kept frame classifications.
     """
-    if skip_categories is None:
-        skip_categories = {"talking_head", "transition", "advertisement"}
-
     if not video.exists():
         raise FileNotFoundError(f"Video not found: {video}")
 
@@ -313,7 +310,50 @@ def extract_and_classify(
     frames = sample_frames(video, raw_dir, interval)
     logger.info("  Extracted %d frames", len(frames))
 
-    # Step 1b: Drop frames in sponsor ranges
+    return classify_sampled_frames(
+        raw_dir,
+        output_dir,
+        interval=interval,
+        transcript_entries=transcript_entries,
+        max_hamming=max_hamming,
+        min_value=min_value,
+        skip_categories=skip_categories,
+        sponsor_ranges=sponsor_ranges,
+        model=model,
+    )
+
+
+def classify_sampled_frames(
+    raw_frames_dir: Path,
+    output_dir: Path,
+    interval: int = 5,
+    transcript_entries: list[tuple[int, str]] | None = None,
+    max_hamming: int = 8,
+    min_value: int = 3,
+    skip_categories: set[str] | None = None,
+    sponsor_ranges: list[tuple[int, int]] | None = None,
+    model: str | None = None,
+) -> list[dict[str, str | int]]:
+    """Classify and filter already-sampled raw frames.
+
+    The download worker can run ffmpeg once and store samples in
+    ``00_download/raw_frames``. This function performs the transcript-aware
+    decisions and writes the normal ``04_frames`` outputs.
+    """
+    if skip_categories is None:
+        skip_categories = {"talking_head", "transition", "advertisement"}
+
+    if not raw_frames_dir.exists():
+        raise FileNotFoundError(f"Raw frames directory not found: {raw_frames_dir}")
+
+    frames = sorted(raw_frames_dir.glob("frame_*.jpg"))
+    if not frames:
+        raise RuntimeError(f"No raw frame samples found in {raw_frames_dir}")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("Using %d sampled frames from %s", len(frames), raw_frames_dir)
+
+    # Step 1: Drop frames in sponsor ranges
     if sponsor_ranges:
         before = len(frames)
         frames = [

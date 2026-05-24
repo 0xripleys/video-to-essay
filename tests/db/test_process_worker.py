@@ -144,11 +144,11 @@ def _make_video_row() -> dict:
 @patch("video_to_essay.process_worker.download_run")
 @patch("video_to_essay.process_worker.annotate_essay")
 @patch("video_to_essay.process_worker.place_images_in_essay")
-@patch("video_to_essay.process_worker.extract_and_classify")
+@patch("video_to_essay.process_worker.classify_sampled_frames")
 @patch("video_to_essay.process_worker.summarize_essay")
 @patch("video_to_essay.process_worker.transcript_to_essay")
 @patch("video_to_essay.process_worker.filter_sponsors")
-@patch("video_to_essay.process_worker.transcribe_with_deepgram")
+@patch("video_to_essay.process_worker.transcribe_audio_with_deepgram")
 def test_process_one_happy_path(
     mock_transcribe: MagicMock,
     mock_filter: MagicMock,
@@ -178,7 +178,9 @@ def test_process_one_happy_path(
         def fake_download_run(vid, step_dirs=None):
             dl_dir = tmp_path / vid / "00_download"
             dl_dir.mkdir(parents=True, exist_ok=True)
-            (dl_dir / "video.mp4").write_bytes(b"\x00" * 16)
+            (dl_dir / "audio.mp3").write_bytes(b"\x00" * 16)
+            (dl_dir / "raw_frames").mkdir(parents=True, exist_ok=True)
+            (dl_dir / "raw_frames" / "frame_0001.jpg").write_bytes(tiny)
             (dl_dir / "metadata.json").write_text(json.dumps({
                 "video_id": vid,
                 "url": f"https://www.youtube.com/watch?v={vid}",
@@ -186,8 +188,9 @@ def test_process_one_happy_path(
 
         mock_download_run.side_effect = fake_download_run
 
-        # -- Mock: transcribe_with_deepgram writes transcript.txt --
-        def fake_transcribe(video_path, output_dir, meta, force=False):
+        # -- Mock: transcribe_audio_with_deepgram writes transcript.txt --
+        def fake_transcribe(audio_path, output_dir, meta, force=False):
+            assert audio_path == run_dir / "00_download" / "audio.mp3"
             (output_dir / "transcript.txt").write_text(TRANSCRIPT)
 
         mock_transcribe.side_effect = fake_transcribe
@@ -204,8 +207,9 @@ def test_process_one_happy_path(
 
         mock_summarize.side_effect = fake_summarize
 
-        # -- Mock: extract_and_classify writes frames + classifications --
-        def fake_extract(video, output_dir, **kwargs):
+        # -- Mock: classify_sampled_frames writes frames + classifications --
+        def fake_extract(raw_frames_dir, output_dir, **kwargs):
+            assert raw_frames_dir == run_dir / "00_download" / "raw_frames"
             kept_dir = output_dir / "kept"
             kept_dir.mkdir(parents=True, exist_ok=True)
             for c in CLASSIFICATIONS:

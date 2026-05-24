@@ -139,14 +139,17 @@ All four workers run as daemon threads in a single Python process, started by `w
 
 **Poll interval:** 10s
 
-**Purpose:** Download video files and metadata from YouTube.
+**Purpose:** Download videos from YouTube and prepare the media handoff for processing.
 
 **Behavior:**
 1. Query `get_videos_pending_download()` — returns videos where `downloaded_at IS NULL AND error IS NULL`.
-2. For each video, download via yt-dlp to `runs/<youtube_video_id>/00_download/`.
+2. For each video, download via yt-dlp to local `runs/<youtube_video_id>/00_download/`.
 3. Fetch metadata via `yt-dlp --dump-json`, save to `metadata.json`.
-4. Set `downloaded_at` and `video_title` on the video row.
-5. On failure, set `error` — no retries.
+4. Use ffmpeg to extract `00_download/audio.mp3`.
+5. Use ffmpeg to sample raw frames into `00_download/raw_frames/`.
+6. Upload the prepared `00_download/` handoff to S3, excluding source `video.*` files for new runs.
+7. Set `downloaded_at` and `video_title` on the video row.
+8. On failure, set `error` — no retries.
 
 **Writes:** `videos` (UPDATE `downloaded_at`, `video_title`, or `error`). Files to disk.
 
@@ -160,10 +163,10 @@ All four workers run as daemon threads in a single Python process, started by `w
 1. Atomically claim one video with `claim_next_video_for_processing(worker_id)`, which uses `FOR UPDATE SKIP LOCKED` and sets `processing_started_at` / `processing_worker_id`.
 2. If no row is claimed, sleep until the next poll.
 3. For a claimed video, run the pipeline steps in order:
-   - **Transcript:** Extract audio → Deepgram API → speaker mapping → formatted transcript.
+   - **Transcript:** Read prepared `00_download/audio.mp3` → Deepgram API → speaker mapping → formatted transcript.
    - **Filter sponsors:** Claude Haiku detects ad segments → cleaned transcript.
    - **Essay:** Claude Sonnet generates essay from cleaned transcript.
-   - **Extract frames:** Sample frames from video → dedup → classify with Haiku → filter.
+   - **Extract frames:** Read prepared `00_download/raw_frames/` → dedup → classify with Haiku → filter.
    - **Place images:** Sonnet places frames into essay → annotate figures → embed base64.
 4. Set `processed_at` on the video row.
 5. On failure, set `error` — no retries.
@@ -243,10 +246,10 @@ Each video's artifacts are stored under `runs/<youtube_video_id>/`:
 ```
 runs/<youtube_video_id>/
   00_download/      ← download worker
-    video.mp4
     metadata.json
-  01_transcript/    ← process worker
     audio.mp3
+    raw_frames/
+  01_transcript/    ← process worker
     transcript.txt
     diarization.json
     deepgram_response.json
@@ -257,7 +260,6 @@ runs/<youtube_video_id>/
   03_essay/
     essay.md
   04_frames/
-    raw/
     kept/
     classifications.json
   05_place_images/

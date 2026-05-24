@@ -37,11 +37,16 @@ def _content_type(path: Path) -> str:
     return ct or "application/octet-stream"
 
 
-def upload_run(video_id: str, step_dirs: list[str] | None = None) -> None:
+def upload_run(
+    video_id: str,
+    step_dirs: list[str] | None = None,
+    exclude_globs: list[str] | None = None,
+) -> None:
     """Upload local run artifacts to S3.
 
     If step_dirs is given, only upload those subdirectories (e.g. ["00_download"]).
     Otherwise upload the entire runs/<video_id>/ tree.
+    If exclude_globs is given, skip relative paths matching any glob.
     """
     client = get_s3_client()
     bucket, _ = _get_config()
@@ -58,7 +63,10 @@ def upload_run(video_id: str, step_dirs: list[str] | None = None) -> None:
         for file_path in d.rglob("*"):
             if not file_path.is_file() or file_path.name.endswith(".part"):
                 continue
-            key = f"runs/{video_id}/{file_path.relative_to(base)}"
+            rel_path = file_path.relative_to(base)
+            if exclude_globs and any(rel_path.match(pattern) for pattern in exclude_globs):
+                continue
+            key = f"runs/{video_id}/{rel_path}"
             client.upload_file(
                 str(file_path),
                 bucket,

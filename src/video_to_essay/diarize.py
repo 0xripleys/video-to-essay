@@ -265,13 +265,6 @@ def transcribe_with_deepgram(
     Raises RuntimeError if the key is missing.
     Always writes to transcript.txt (with **Speaker** markers if multi-speaker).
     """
-    api_key = os.environ.get("DEEPGRAM_API_KEY")
-    if not api_key:
-        raise RuntimeError(
-            "DEEPGRAM_API_KEY not set. Set it in .env or environment. "
-            "Get a free key at https://console.deepgram.com/signup"
-        )
-
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Check for existing output (skip if not forcing)
@@ -284,21 +277,49 @@ def transcribe_with_deepgram(
     logger.info("Extracting audio from video...")
     audio_path = extract_audio(video_path, output_dir)
 
-    # Step 2: Run Deepgram diarization
+    transcribe_audio_with_deepgram(audio_path, output_dir, metadata, force, model=model)
+
+
+def transcribe_audio_with_deepgram(
+    audio_path: Path,
+    output_dir: Path,
+    metadata: dict,
+    force: bool = False,
+    model: str | None = None,
+) -> None:
+    """Run Deepgram transcription + diarization from an existing audio file."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    transcript_path = output_dir / "transcript.txt"
+    if not force and transcript_path.exists():
+        logger.info("Transcript exists, skipping (%s)", transcript_path)
+        return
+
+    if not audio_path.exists():
+        raise FileNotFoundError(f"Prepared audio file not found: {audio_path}")
+
+    api_key = os.environ.get("DEEPGRAM_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "DEEPGRAM_API_KEY not set. Set it in .env or environment. "
+            "Get a free key at https://console.deepgram.com/signup"
+        )
+
+    # Step 1: Run Deepgram diarization
     logger.info("Running Deepgram diarization...")
     segments = run_diarization(audio_path, api_key, output_dir)
 
-    # Step 3: Check speaker count
+    # Step 2: Check speaker count
     unique_speakers = set(s["speaker"] for s in segments)
     is_multi_speaker = len(unique_speakers) > 1
 
-    # Step 4: Map speaker names (only if multi-speaker)
+    # Step 3: Map speaker names (only if multi-speaker)
     speaker_names: dict[int, str] | None = None
     if is_multi_speaker:
         logger.info("Found %d speakers, mapping names...", len(unique_speakers))
         speaker_names = map_speaker_names(segments, metadata, output_dir, model=model)
 
-    # Step 5: Format and save transcript
+    # Step 4: Format and save transcript
     transcript_text = format_transcript(segments, speaker_names)
     transcript_path.write_text(transcript_text)
     logger.info("Transcript saved (%d chars) -> %s", len(transcript_text), transcript_path)

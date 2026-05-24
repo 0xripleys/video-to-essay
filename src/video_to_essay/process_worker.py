@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 
 from . import db, llm
 from .analytics import capture as track
-from .diarize import transcribe_with_deepgram
-from .extract_frames import extract_and_classify, parse_transcript
+from .diarize import transcribe_audio_with_deepgram
+from .extract_frames import classify_sampled_frames, parse_transcript
 from .filter_sponsors import filter_sponsors
 from .place_images import (
     annotate_essay,
@@ -132,22 +132,16 @@ def _process_one(video: dict) -> None:
 
     download_run(youtube_video_id, step_dirs=["00_download"])
 
-    # Find the video file, preferring clean names over yt-dlp intermediates (e.g. video.f396.mp4)
-    all_video_files = sorted(dl_dir.glob("video.*"))
-    if not all_video_files:
-        raise RuntimeError(f"No video file found in {dl_dir}")
-    video_files = [f for f in all_video_files if not re.search(r"\.f\d+\.", f.name)] or all_video_files
-    video_path = video_files[0]
-
     # Load metadata
     meta_path = dl_dir / "metadata.json"
     meta: dict = {}
     if meta_path.exists():
         meta = json.loads(meta_path.read_text())
 
-    # Step 1: Transcript (transcribe_with_deepgram has its own force=False skip)
+    # Step 1: Transcript (transcribe_audio_with_deepgram has its own force=False skip)
     transcript_dir = _step_dir(run_dir, "transcript")
-    transcribe_with_deepgram(video_path, transcript_dir, meta, force=False)
+    audio_path = dl_dir / "audio.mp3"
+    transcribe_audio_with_deepgram(audio_path, transcript_dir, meta, force=False)
     transcript_text = (transcript_dir / "transcript.txt").read_text()
 
     # Step 2: Filter sponsors — skip LLM call if outputs already exist on disk.
@@ -184,9 +178,14 @@ def _process_one(video: dict) -> None:
     if classifications_path.exists():
         logger.info("Process: %s frame classifications already exist, skipping", youtube_video_id)
     else:
+        raw_frames_dir = dl_dir / "raw_frames"
+        if not any(raw_frames_dir.glob("frame_*.jpg")):
+            raise RuntimeError(
+                f"Prepared download bundle missing raw frames in {raw_frames_dir}"
+            )
         transcript_entries = parse_transcript(transcript_text)
-        extract_and_classify(
-            video=video_path,
+        classify_sampled_frames(
+            raw_frames_dir=raw_frames_dir,
             output_dir=frames_dir,
             transcript_entries=transcript_entries,
             sponsor_ranges=sponsor_ranges,

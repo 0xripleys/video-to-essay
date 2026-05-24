@@ -31,6 +31,7 @@ export interface RunDetailProps {
   artifacts: Record<string, string | null>;
   files: RunFile[];
   keptFrames: string[];
+  rawFramePrefix: string;
 }
 
 const TABS = [
@@ -142,6 +143,7 @@ export default function RunDetail(props: RunDetailProps) {
             videoId={video.youtube_video_id}
             classificationsJson={props.artifacts["04_frames/classifications.json"]}
             keptFrames={props.keptFrames}
+            rawFramePrefix={props.rawFramePrefix}
           />
         )}
         {tab === "final" && <Final markdown={props.artifacts["05_place_images/essay_final.md"]} />}

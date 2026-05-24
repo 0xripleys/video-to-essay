@@ -14,9 +14,11 @@ import pytest
 
 
 def _seed_inputs(run_dir: Path) -> None:
-    """Mimic what download_run + transcribe_with_deepgram would have produced."""
+    """Mimic what download_run + transcribe_audio_with_deepgram would have produced."""
     (run_dir / "00_download").mkdir(parents=True)
-    (run_dir / "00_download" / "video.mp4").write_bytes(b"\x00" * 16)
+    (run_dir / "00_download" / "audio.mp3").write_bytes(b"\x00" * 16)
+    (run_dir / "00_download" / "raw_frames").mkdir(parents=True)
+    (run_dir / "00_download" / "raw_frames" / "frame_0001.jpg").write_bytes(b"\x00" * 16)
     (run_dir / "00_download" / "metadata.json").write_text(
         json.dumps({"title": "test", "channel": "test"})
     )
@@ -25,8 +27,9 @@ def _seed_inputs(run_dir: Path) -> None:
 
 
 def _frames_side_effect_no_kept() -> MagicMock:
-    """extract_and_classify writes classifications.json but kept/ is empty."""
-    def side_effect(*, video, output_dir, **_kwargs):
+    """classify_sampled_frames writes classifications.json but kept/ is empty."""
+    def side_effect(*, raw_frames_dir, output_dir, **_kwargs):
+        assert raw_frames_dir.name == "raw_frames"
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "kept").mkdir(parents=True, exist_ok=True)
         (output_dir / "classifications.json").write_text(json.dumps([
@@ -162,10 +165,10 @@ def test_process_pending_once_marks_non_transient_failure(
 @patch("video_to_essay.process_worker.annotate_essay")
 @patch("video_to_essay.process_worker.place_images_in_essay")
 @patch("video_to_essay.process_worker.load_kept_frames")
-@patch("video_to_essay.process_worker.extract_and_classify")
+@patch("video_to_essay.process_worker.classify_sampled_frames")
 @patch("video_to_essay.process_worker.transcript_to_essay")
 @patch("video_to_essay.process_worker.filter_sponsors")
-@patch("video_to_essay.process_worker.transcribe_with_deepgram")
+@patch("video_to_essay.process_worker.transcribe_audio_with_deepgram")
 def test_process_one_uploads_04_frames_even_when_no_kept(
     mock_transcribe: MagicMock,
     mock_filter: MagicMock,
@@ -235,10 +238,10 @@ def test_process_one_uploads_04_frames_even_when_no_kept(
 @patch("video_to_essay.process_worker.annotate_essay")
 @patch("video_to_essay.process_worker.place_images_in_essay")
 @patch("video_to_essay.process_worker.load_kept_frames")
-@patch("video_to_essay.process_worker.extract_and_classify")
+@patch("video_to_essay.process_worker.classify_sampled_frames")
 @patch("video_to_essay.process_worker.transcript_to_essay")
 @patch("video_to_essay.process_worker.filter_sponsors")
-@patch("video_to_essay.process_worker.transcribe_with_deepgram")
+@patch("video_to_essay.process_worker.transcribe_audio_with_deepgram")
 @patch("video_to_essay.process_worker.get_public_url")
 def test_process_one_uploads_04_frames_when_frames_kept(
     mock_get_url: MagicMock,
@@ -327,10 +330,10 @@ def _seed_full_pipeline(run_dir: Path, *, with_classifications: bool = True,
 @patch("video_to_essay.process_worker.annotate_essay")
 @patch("video_to_essay.process_worker.place_images_in_essay")
 @patch("video_to_essay.process_worker.load_kept_frames")
-@patch("video_to_essay.process_worker.extract_and_classify")
+@patch("video_to_essay.process_worker.classify_sampled_frames")
 @patch("video_to_essay.process_worker.transcript_to_essay")
 @patch("video_to_essay.process_worker.filter_sponsors")
-@patch("video_to_essay.process_worker.transcribe_with_deepgram")
+@patch("video_to_essay.process_worker.transcribe_audio_with_deepgram")
 def test_process_one_skips_filter_sponsors_when_outputs_exist(
     mock_transcribe: MagicMock,
     mock_filter: MagicMock,
@@ -382,10 +385,10 @@ def test_process_one_skips_filter_sponsors_when_outputs_exist(
 @patch("video_to_essay.process_worker.annotate_essay")
 @patch("video_to_essay.process_worker.place_images_in_essay")
 @patch("video_to_essay.process_worker.load_kept_frames")
-@patch("video_to_essay.process_worker.extract_and_classify")
+@patch("video_to_essay.process_worker.classify_sampled_frames")
 @patch("video_to_essay.process_worker.transcript_to_essay")
 @patch("video_to_essay.process_worker.filter_sponsors")
-@patch("video_to_essay.process_worker.transcribe_with_deepgram")
+@patch("video_to_essay.process_worker.transcribe_audio_with_deepgram")
 def test_process_one_skips_essay_when_essay_md_exists(
     mock_transcribe: MagicMock,
     mock_filter: MagicMock,
@@ -435,10 +438,10 @@ def test_process_one_skips_essay_when_essay_md_exists(
 @patch("video_to_essay.process_worker.annotate_essay")
 @patch("video_to_essay.process_worker.place_images_in_essay")
 @patch("video_to_essay.process_worker.load_kept_frames")
-@patch("video_to_essay.process_worker.extract_and_classify")
+@patch("video_to_essay.process_worker.classify_sampled_frames")
 @patch("video_to_essay.process_worker.transcript_to_essay")
 @patch("video_to_essay.process_worker.filter_sponsors")
-@patch("video_to_essay.process_worker.transcribe_with_deepgram")
+@patch("video_to_essay.process_worker.transcribe_audio_with_deepgram")
 def test_process_one_skips_extract_when_classifications_exist(
     mock_transcribe: MagicMock,
     mock_filter: MagicMock,
@@ -485,10 +488,10 @@ def test_process_one_skips_extract_when_classifications_exist(
 @patch("video_to_essay.process_worker.annotate_essay")
 @patch("video_to_essay.process_worker.place_images_in_essay")
 @patch("video_to_essay.process_worker.load_kept_frames")
-@patch("video_to_essay.process_worker.extract_and_classify")
+@patch("video_to_essay.process_worker.classify_sampled_frames")
 @patch("video_to_essay.process_worker.transcript_to_essay")
 @patch("video_to_essay.process_worker.filter_sponsors")
-@patch("video_to_essay.process_worker.transcribe_with_deepgram")
+@patch("video_to_essay.process_worker.transcribe_audio_with_deepgram")
 def test_process_one_fully_idempotent_when_all_outputs_exist(
     mock_transcribe: MagicMock,
     mock_filter: MagicMock,

@@ -57,6 +57,9 @@ export default async function RunDetailPage({
     .filter((f) => f.relativePath.startsWith("04_frames/kept/") && f.relativePath.endsWith(".jpg"))
     .map((f) => f.relativePath.split("/").pop()!)
     .filter((name) => name.startsWith("frame_"));
+  const rawFramePrefix = files.some((f) => f.relativePath.startsWith("00_download/raw_frames/"))
+    ? "00_download/raw_frames"
+    : "04_frames/raw";
 
   const status = videoStatus(video);
 
@@ -103,6 +106,7 @@ export default async function RunDetailPage({
           size: f.size,
         }))}
         keptFrames={keptFrames}
+        rawFramePrefix={rawFramePrefix}
       />
     </>
   );
