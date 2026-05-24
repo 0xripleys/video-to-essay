@@ -46,6 +46,8 @@ Created by the web app when a user subscribes to a channel. The discover worker 
 | `video_title` | TEXT | Set by download worker from yt-dlp metadata |
 | `channel_id` | TEXT FK→channels | NULL for one-off conversions |
 | `downloaded_at` | TIMESTAMPTZ | Set by download worker |
+| `processing_started_at` | TIMESTAMPTZ | Set when a process worker claims the row |
+| `processing_worker_id` | TEXT | Process worker identifier that claimed the row |
 | `processed_at` | TIMESTAMPTZ | Set by process worker |
 | `error` | TEXT | Set on permanent failure |
 | `created_at` | TIMESTAMPTZ | |
@@ -58,6 +60,7 @@ Created by the web app when a user subscribes to a channel. The discover worker 
 ```
 created (downloaded_at=NULL, processed_at=NULL, error=NULL)
   → downloaded (downloaded_at set)
+  → processing (processing_started_at set by an atomic worker claim)
   → processed (processed_at set)
   → failed (error set) — terminal, no retries
 ```
@@ -154,17 +157,19 @@ All four workers run as daemon threads in a single Python process, started by `w
 **Purpose:** Run the full essay pipeline on downloaded videos.
 
 **Behavior:**
-1. Query `get_videos_pending_processing()` — returns videos where `downloaded_at IS NOT NULL AND processed_at IS NULL AND error IS NULL`.
-2. For each video, run the pipeline steps in order:
+1. Atomically claim one video with `claim_next_video_for_processing(worker_id)`, which uses `FOR UPDATE SKIP LOCKED` and sets `processing_started_at` / `processing_worker_id`.
+2. If no row is claimed, sleep until the next poll.
+3. For a claimed video, run the pipeline steps in order:
    - **Transcript:** Extract audio → Deepgram API → speaker mapping → formatted transcript.
    - **Filter sponsors:** Claude Haiku detects ad segments → cleaned transcript.
    - **Essay:** Claude Sonnet generates essay from cleaned transcript.
    - **Extract frames:** Sample frames from video → dedup → classify with Haiku → filter.
    - **Place images:** Sonnet places frames into essay → annotate figures → embed base64.
-3. Set `processed_at` on the video row.
-4. On failure, set `error` — no retries.
+4. Set `processed_at` on the video row.
+5. On failure, set `error` — no retries.
+6. If a process dies after claiming but before success/failure, manual intervention is required to clear `processing_started_at`.
 
-**Writes:** `videos` (UPDATE `processed_at` or `error`). Files to disk under `runs/<youtube_video_id>/01_transcript/` through `05_place_images/`.
+**Writes:** `videos` (UPDATE `processing_started_at`, `processing_worker_id`, `processed_at`, or `error`). Files to disk under `runs/<youtube_video_id>/01_transcript/` through `05_place_images/`.
 
 **Requires:** `ANTHROPIC_API_KEY`, `DEEPGRAM_API_KEY`.
 

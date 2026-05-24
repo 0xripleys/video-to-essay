@@ -1,5 +1,6 @@
 """Tests 44-69: database CRUD, state transitions, queue queries, deliveries."""
 
+from concurrent.futures import ThreadPoolExecutor
 import uuid
 
 from video_to_essay import db
@@ -208,16 +209,85 @@ def test_get_videos_pending_processing(pg_container):
     vid1 = make_video()  # downloaded only
     vid2 = make_video()  # downloaded + processed
     vid3 = make_video()  # not downloaded
+    vid4 = make_video()  # another downloaded row
 
     db.mark_video_downloaded(vid1)
     db.mark_video_downloaded(vid2)
     db.mark_video_processed(vid2)
+    db.mark_video_downloaded(vid4)
+    claimed = db.claim_next_video_for_processing("worker-existing")
 
     pending = db.get_videos_pending_processing()
     pending_ids = [v["id"] for v in pending]
-    assert vid1 in pending_ids
+    assert claimed is not None
+    assert claimed["id"] not in pending_ids
+    assert {vid1, vid4} - {claimed["id"]} <= set(pending_ids)
     assert vid2 not in pending_ids
     assert vid3 not in pending_ids
+
+
+def test_claim_next_video_for_processing_claims_oldest_pending(raw_conn):
+    vid1 = make_video()
+    vid2 = make_video()
+    vid3 = make_video()
+
+    db.mark_video_downloaded(vid1)
+    db.mark_video_downloaded(vid2)
+    db.mark_video_downloaded(vid3)
+    db.mark_video_processed(vid3)
+    raw_conn.execute(
+        "UPDATE videos SET created_at = NOW() - INTERVAL '2 hours' WHERE id = %s",
+        (vid2,),
+    )
+    raw_conn.execute(
+        "UPDATE videos SET created_at = NOW() - INTERVAL '1 hour' WHERE id = %s",
+        (vid1,),
+    )
+    raw_conn.commit()
+
+    claimed = db.claim_next_video_for_processing("worker-a")
+
+    assert claimed is not None
+    assert claimed["id"] == vid2
+    assert claimed["processing_started_at"] is not None
+    assert claimed["processing_worker_id"] == "worker-a"
+
+    pending = db.get_videos_pending_processing()
+    assert vid2 not in [v["id"] for v in pending]
+
+
+def test_claim_next_video_for_processing_skips_claimed_rows(pg_container):
+    vid1 = make_video()
+    vid2 = make_video()
+
+    db.mark_video_downloaded(vid1)
+    db.mark_video_downloaded(vid2)
+
+    first = db.claim_next_video_for_processing("worker-a")
+    second = db.claim_next_video_for_processing("worker-b")
+    third = db.claim_next_video_for_processing("worker-c")
+
+    assert first is not None
+    assert second is not None
+    assert first["id"] != second["id"]
+    assert {first["id"], second["id"]} == {vid1, vid2}
+    assert third is None
+
+
+def test_claim_next_video_for_processing_is_concurrency_safe(pg_container):
+    video_ids = [make_video() for _ in range(8)]
+    for video_id in video_ids:
+        db.mark_video_downloaded(video_id)
+
+    def claim(worker_num: int) -> str | None:
+        video = db.claim_next_video_for_processing(f"worker-{worker_num}")
+        return video["id"] if video else None
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        claimed_ids = list(executor.map(claim, range(8)))
+
+    assert sorted(claimed_ids) == sorted(video_ids)
+    assert len(set(claimed_ids)) == len(video_ids)
 
 
 # -- Test 58: get_channels_due_for_check — respects poll interval ------------

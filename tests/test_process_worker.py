@@ -86,6 +86,74 @@ def test_is_transient_error_rejects_content_errors() -> None:
     assert not _is_transient_error(exc)
 
 
+@patch("video_to_essay.process_worker._process_one")
+@patch("video_to_essay.process_worker.db")
+def test_process_pending_once_claims_and_processes_one(
+    mock_db: MagicMock,
+    mock_process_one: MagicMock,
+) -> None:
+    from video_to_essay.process_worker import _process_pending_once
+
+    video = {
+        "id": "row-1",
+        "youtube_video_id": "video-1",
+        "video_title": "Claimed video",
+    }
+    mock_db.claim_next_video_for_processing.return_value = video
+
+    claimed = _process_pending_once("worker-a")
+
+    assert claimed is True
+    mock_db.claim_next_video_for_processing.assert_called_once_with("worker-a")
+    mock_process_one.assert_called_once_with(video)
+    mock_db.mark_video_failed.assert_not_called()
+
+
+@patch("video_to_essay.process_worker._process_one")
+@patch("video_to_essay.process_worker.db")
+def test_process_pending_once_returns_false_when_no_work(
+    mock_db: MagicMock,
+    mock_process_one: MagicMock,
+) -> None:
+    from video_to_essay.process_worker import _process_pending_once
+
+    mock_db.claim_next_video_for_processing.return_value = None
+
+    claimed = _process_pending_once("worker-a")
+
+    assert claimed is False
+    mock_db.claim_next_video_for_processing.assert_called_once_with("worker-a")
+    mock_process_one.assert_not_called()
+    mock_db.mark_video_failed.assert_not_called()
+
+
+@patch("video_to_essay.process_worker.sentry_sdk.capture_exception")
+@patch("video_to_essay.process_worker._process_one")
+@patch("video_to_essay.process_worker.db")
+def test_process_pending_once_marks_non_transient_failure(
+    mock_db: MagicMock,
+    mock_process_one: MagicMock,
+    mock_capture: MagicMock,
+) -> None:
+    from video_to_essay.process_worker import _process_pending_once
+
+    video = {
+        "id": "row-1",
+        "youtube_video_id": "video-1",
+        "video_title": "Claimed video",
+    }
+    mock_db.claim_next_video_for_processing.return_value = video
+    mock_process_one.side_effect = ValueError("bad content")
+
+    claimed = _process_pending_once("worker-a")
+
+    assert claimed is True
+    mock_capture.assert_called_once()
+    mock_db.mark_video_failed.assert_called_once()
+    assert mock_db.mark_video_failed.call_args.args[0] == "row-1"
+    assert "Processing failed:" in mock_db.mark_video_failed.call_args.args[1]
+
+
 @patch("video_to_essay.process_worker.track")
 @patch("video_to_essay.process_worker.db")
 @patch("video_to_essay.process_worker.upload_run")

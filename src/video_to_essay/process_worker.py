@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import socket
 import traceback
 import time
 from collections.abc import Iterator
@@ -237,32 +238,48 @@ def _process_one(video: dict) -> None:
     logger.info("Process: completed %s (%s)", youtube_video_id, video.get("video_title", "untitled"))
 
 
-def process_loop(poll_interval: float = 10.0) -> None:
+def _default_worker_id() -> str:
+    return os.environ.get("PROCESS_WORKER_ID") or f"{socket.gethostname()}:{os.getpid()}"
+
+
+def _process_pending_once(worker_id: str) -> bool:
+    """Claim and process at most one pending video. Returns True if work was claimed."""
+    video = db.claim_next_video_for_processing(worker_id)
+    if video is None:
+        return False
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            _process_one(video)
+            break
+        except Exception as exc:
+            if _is_transient_error(exc):
+                _handle_transient_failure(video, attempt)
+                continue
+            sentry_sdk.capture_exception()
+            logger.exception("Process: failed %s", video["youtube_video_id"])
+            db.mark_video_failed(video["id"], f"Processing failed: {traceback.format_exc()}")
+            break
+    return True
+
+
+def process_loop(poll_interval: float = 10.0, worker_id: str | None = None) -> None:
     """Poll for videos pending processing and run the pipeline."""
     from .worker import init_logging, init_sentry
     init_sentry()
     init_logging()
-    logger.info("Process worker started (polling every %ss)", poll_interval)
+    db.init_db()
+    worker_id = worker_id or _default_worker_id()
+    logger.info("Process worker started as %s (polling every %ss)", worker_id, poll_interval)
     for key in ("DATABASE_URL", "OPENROUTER_API_KEY", "DEEPGRAM_API_KEY", "S3_BUCKET_NAME"):
         val = os.environ.get(key)
         logger.info("  %s: %s", key, "set" if val else "NOT SET")
     while True:
         try:
-            videos = db.get_videos_pending_processing()
-            for video in videos:
-                for attempt in range(1, MAX_RETRIES + 1):
-                    try:
-                        _process_one(video)
-                        break
-                    except Exception as exc:
-                        if _is_transient_error(exc):
-                            _handle_transient_failure(video, attempt)
-                            continue
-                        sentry_sdk.capture_exception()
-                        logger.exception("Process: failed %s", video["youtube_video_id"])
-                        db.mark_video_failed(video["id"], f"Processing failed: {traceback.format_exc()}")
-                        break
+            claimed = _process_pending_once(worker_id)
         except Exception:
             sentry_sdk.capture_exception()
             logger.exception("Process worker: error in poll loop")
-        time.sleep(poll_interval)
+            claimed = False
+        if not claimed:
+            time.sleep(poll_interval)

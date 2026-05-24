@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS videos (
     channel_id TEXT REFERENCES channels(id),
     matched_playlist_ids TEXT[],
     downloaded_at TIMESTAMPTZ,
+    processing_started_at TIMESTAMPTZ,
+    processing_worker_id TEXT,
     processed_at TIMESTAMPTZ,
     error TEXT,
     created_at TIMESTAMPTZ NOT NULL
@@ -91,6 +93,8 @@ MIGRATIONS = [
     "ALTER TABLE videos ADD COLUMN IF NOT EXISTS matched_playlist_ids TEXT[]",
     "ALTER TABLE videos ADD COLUMN IF NOT EXISTS is_livestream BOOLEAN NOT NULL DEFAULT FALSE",
     "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS exclude_livestreams BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE videos ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMPTZ",
+    "ALTER TABLE videos ADD COLUMN IF NOT EXISTS processing_worker_id TEXT",
 ]
 
 
@@ -368,9 +372,46 @@ def get_videos_pending_download() -> list[dict[str, Any]]:
 def get_videos_pending_processing() -> list[dict[str, Any]]:
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT * FROM videos WHERE downloaded_at IS NOT NULL AND processed_at IS NULL AND error IS NULL ORDER BY created_at ASC"
+            """
+            SELECT *
+            FROM videos
+            WHERE downloaded_at IS NOT NULL
+              AND processing_started_at IS NULL
+              AND processed_at IS NULL
+              AND error IS NULL
+            ORDER BY created_at ASC
+            """
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def claim_next_video_for_processing(worker_id: str) -> dict[str, Any] | None:
+    """Atomically claim the oldest downloaded video that still needs processing."""
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            WITH candidate AS (
+                SELECT id
+                FROM videos
+                WHERE downloaded_at IS NOT NULL
+                  AND processing_started_at IS NULL
+                  AND processed_at IS NULL
+                  AND error IS NULL
+                ORDER BY created_at ASC
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+            )
+            UPDATE videos v
+            SET processing_started_at = NOW(),
+                processing_worker_id = %s
+            FROM candidate
+            WHERE v.id = candidate.id
+            RETURNING v.*
+            """,
+            (worker_id,),
+        ).fetchone()
+        conn.commit()
+    return dict(row) if row else None
 
 
 def mark_video_downloaded(video_id: str, video_title: str | None = None) -> None:
