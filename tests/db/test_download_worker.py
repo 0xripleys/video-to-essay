@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 from video_to_essay import db
-from video_to_essay.download_worker import _download_one
+from video_to_essay.download_worker import _cookies_file_from_env, _download_one
 
 
 # ---------------------------------------------------------------------------
@@ -51,10 +51,12 @@ def test_download_one_happy_path(
     mock_extract_audio: MagicMock,
     mock_sample_frames: MagicMock,
     mock_upload: MagicMock,
+    monkeypatch,
     pg_container,
     tmp_path: Path,
 ):
     """Video is downloaded, metadata saved, uploaded to S3, and marked downloaded."""
+    monkeypatch.delenv("YTDLP_COOKIES_FILE", raising=False)
     video = make_video(video_title="My Video")
 
     mock_metadata.return_value = {"title": "My Video", "channel": "Test"}
@@ -62,7 +64,7 @@ def test_download_one_happy_path(
     with patch("video_to_essay.download_worker.RUNS_DIR", tmp_path):
         run_dir = tmp_path / video["youtube_video_id"] / "00_download"
 
-        def fake_download(video_id, output_dir):
+        def fake_download(video_id, output_dir, cookies_path=None):
             video_path = output_dir / "video.mp4"
             video_path.write_bytes(b"fake video data")
             return video_path
@@ -86,6 +88,7 @@ def test_download_one_happy_path(
     # download_video called with the youtube video id
     mock_download.assert_called_once()
     assert mock_download.call_args[0][0] == video["youtube_video_id"]
+    assert mock_download.call_args[0][2] is None
     mock_extract_audio.assert_called_once_with(run_dir / "video.mp4", run_dir)
     mock_sample_frames.assert_called_once_with(run_dir / "video.mp4", run_dir / "raw_frames", 5)
 
@@ -110,6 +113,79 @@ def test_download_one_happy_path(
     assert (tmp_path / video["youtube_video_id"] / "00_download" / "raw_frames" / "frame_0001.jpg").exists()
 
 
+def test_cookies_file_from_env_validates_file(monkeypatch, tmp_path: Path):
+    cookies_file = tmp_path / "cookies.txt"
+    cookies_file.write_text("# Netscape HTTP Cookie File\n")
+    monkeypatch.setenv("YTDLP_COOKIES_FILE", str(cookies_file))
+
+    assert _cookies_file_from_env() == str(cookies_file)
+
+
+def test_cookies_file_from_env_rejects_missing_file(monkeypatch, tmp_path: Path):
+    missing = tmp_path / "missing-cookies.txt"
+    monkeypatch.setenv("YTDLP_COOKIES_FILE", str(missing))
+
+    try:
+        _cookies_file_from_env()
+    except FileNotFoundError as exc:
+        assert "YTDLP_COOKIES_FILE" in str(exc)
+        assert str(missing) in str(exc)
+    else:
+        raise AssertionError("missing cookies file should raise FileNotFoundError")
+
+
+@patch("video_to_essay.download_worker.upload_run")
+@patch("video_to_essay.download_worker.sample_frames")
+@patch("video_to_essay.download_worker.extract_audio")
+@patch("video_to_essay.download_worker.fetch_video_metadata")
+@patch("video_to_essay.download_worker.download_video")
+def test_download_one_passes_env_cookies_file_to_ytdlp(
+    mock_download: MagicMock,
+    mock_metadata: MagicMock,
+    mock_extract_audio: MagicMock,
+    mock_sample_frames: MagicMock,
+    mock_upload: MagicMock,
+    monkeypatch,
+    pg_container,
+    tmp_path: Path,
+):
+    video = make_video(video_title="Cookie Video")
+    cookies_file = tmp_path / "cookies.txt"
+    cookies_file.write_text("# Netscape HTTP Cookie File\n")
+    monkeypatch.setenv("YTDLP_COOKIES_FILE", str(cookies_file))
+    mock_metadata.return_value = {"title": "Cookie Video", "channel": "Test"}
+
+    def fake_download(video_id, output_dir, cookies_path=None):
+        video_path = output_dir / "video.mp4"
+        video_path.write_bytes(b"fake video data")
+        return video_path
+
+    def fake_extract_audio(video_path, output_dir):
+        audio_path = output_dir / "audio.mp3"
+        audio_path.write_bytes(b"fake audio")
+        return audio_path
+
+    def fake_sample_frames(video_path, output_dir, interval_seconds):
+        frame_path = output_dir / "frame_0001.jpg"
+        frame_path.write_bytes(b"fake frame")
+        return [frame_path]
+
+    mock_download.side_effect = fake_download
+    mock_extract_audio.side_effect = fake_extract_audio
+    mock_sample_frames.side_effect = fake_sample_frames
+
+    with patch("video_to_essay.download_worker.RUNS_DIR", tmp_path):
+        _download_one(video)
+
+    mock_download.assert_called_once_with(
+        video["youtube_video_id"],
+        tmp_path / video["youtube_video_id"] / "00_download",
+        str(cookies_file),
+    )
+    mock_metadata.assert_called_once_with(video["youtube_video_id"], str(cookies_file))
+    mock_upload.assert_called_once()
+
+
 # ---------------------------------------------------------------------------
 # D5: Skips download when valid local file exists (has audio)
 # ---------------------------------------------------------------------------
@@ -128,10 +204,12 @@ def test_download_one_skips_when_cached_with_audio(
     mock_extract_audio: MagicMock,
     mock_sample_frames: MagicMock,
     mock_upload: MagicMock,
+    monkeypatch,
     pg_container,
     tmp_path: Path,
 ):
     """When a valid video file already exists locally, download is skipped."""
+    monkeypatch.delenv("YTDLP_COOKIES_FILE", raising=False)
     video = make_video(video_title="Cached Video")
 
     # Pre-create a video file

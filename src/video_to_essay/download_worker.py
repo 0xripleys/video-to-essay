@@ -21,6 +21,18 @@ logger = logging.getLogger(__name__)
 RUNS_DIR = Path("runs")
 RAW_FRAME_INTERVAL_SECONDS = 5
 SOURCE_VIDEO_EXCLUDE_GLOBS = ["00_download/video.*"]
+YTDLP_COOKIES_FILE_ENV = "YTDLP_COOKIES_FILE"
+
+
+def _cookies_file_from_env() -> str | None:
+    """Return a validated yt-dlp cookies file path from the environment."""
+    cookies_file = os.environ.get(YTDLP_COOKIES_FILE_ENV)
+    if not cookies_file:
+        return None
+    path = Path(cookies_file).expanduser()
+    if not path.is_file():
+        raise FileNotFoundError(f"{YTDLP_COOKIES_FILE_ENV} points to a missing file: {path}")
+    return str(path)
 
 
 def _select_video_file(run_dir: Path) -> Path | None:
@@ -67,6 +79,7 @@ def _download_one(video: dict) -> None:
     video_id = video["youtube_video_id"]
     run_dir = RUNS_DIR / video_id / "00_download"
     run_dir.mkdir(parents=True, exist_ok=True)
+    cookies_file = _cookies_file_from_env()
 
     # Clean up partial downloads
     for part_file in run_dir.glob("video.*.part"):
@@ -81,11 +94,11 @@ def _download_one(video: dict) -> None:
         else:
             logger.info("[%s] Cached file has no audio stream, re-downloading...", video_id)
             video_path.unlink()
-            video_path = download_video(video_id, run_dir)
+            video_path = download_video(video_id, run_dir, cookies_file)
             logger.info("[%s] Download complete", video_id)
     else:
         logger.info("[%s] Downloading video...", video_id)
-        video_path = download_video(video_id, run_dir)
+        video_path = download_video(video_id, run_dir, cookies_file)
         logger.info("[%s] Download complete", video_id)
 
     # Save metadata
@@ -94,7 +107,7 @@ def _download_one(video: dict) -> None:
         logger.info("[%s] Fetching metadata...", video_id)
         meta: dict = {"url": video["youtube_url"], "video_id": video_id}
         try:
-            yt_meta = fetch_video_metadata(video_id)
+            yt_meta = fetch_video_metadata(video_id, cookies_file)
             meta.update(yt_meta)
         except Exception as e:
             logger.warning("[%s] Metadata fetch failed: %s", video_id, e)
@@ -121,7 +134,7 @@ def download_loop(poll_interval: float = 10.0) -> None:
     init_sentry()
     init_logging()
     logger.info("Download worker started (polling every %ss)", poll_interval)
-    for key in ("DATABASE_URL", "S3_BUCKET_NAME", "PROXY_URL"):
+    for key in ("DATABASE_URL", "S3_BUCKET_NAME", "PROXY_URL", YTDLP_COOKIES_FILE_ENV):
         val = os.environ.get(key)
         logger.info("  %s: %s", key, "set" if val else "NOT SET")
     while True:

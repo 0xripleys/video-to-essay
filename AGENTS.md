@@ -124,7 +124,7 @@ Each step is idempotent and skips existing output unless `--force` is passed. Ea
 - LLM calls: all routed through `src/video_to_essay/llm.py`, a thin LiteLLM wrapper. Persistent model defaults live in the `MODELS` dict at the top of that file. Current production defaults use DeepSeek V3.1 via OpenRouter for text tasks and image placement, Gemini Flash Lite via OpenRouter for frame classification, and Sonnet for explicit scoring/evaluation. For ad-hoc experiments, pass `--model <litellm-string>` to supported single-step CLI subcommands.
 - LLM call logs: each call is persisted as JSON to `<step_dir>/llm_calls/`. Base64 image bytes are stripped to sha256 and size references to avoid duplicating frames already on S3.
 - Deepgram: `DEEPGRAM_API_KEY` is required for transcription. The project uses Nova-3 with diarization.
-- YouTube: `yt-dlp` uses `--remote-components ejs:github` for JS challenges. Cloud IPs need `--cookies`. `ffmpeg` and `deno` must be on `PATH` for the download worker and local CLI runs; the cloud process worker consumes prepared audio and raw frames.
+- YouTube: `yt-dlp` uses `--remote-components ejs:github` for JS challenges. Cloud IPs need cookies; CLI commands take `--cookies`, and the download worker reads `YTDLP_COOKIES_FILE`. `ffmpeg` and `deno` must be on `PATH` for the download worker and local CLI runs; the cloud process worker consumes prepared audio and raw frames.
 - Email: AgentMail sends HTML essays with plaintext fallback. Subject format is `{Channel Name}: {Video Title}`.
 - Images in emails: the worker pipeline uploads frames to S3 and rewrites image paths to public S3 URLs before saving `essay_final.md`. The CLI pipeline uses base64 data URIs through `embed_images()`.
 - Worker failures: workers set `error` on the video or delivery row and move on. There is no automatic retry mechanism.
@@ -142,6 +142,7 @@ All are stored in `.env` at the project root.
 | `AGENTMAIL_API_KEY` | Workers | Email sending |
 | `AGENTMAIL_INBOX_ID` | Workers | AgentMail sender inbox |
 | `YOUTUBE_API_KEY` | Workers | YouTube Data API for polling new uploads |
+| `YTDLP_COOKIES_FILE` | Download worker | Path to a local Netscape-format cookies file for yt-dlp bot checks |
 | `WORKOS_API_KEY` | Web | Auth; unset enables dev mode |
 | `WORKOS_CLIENT_ID` | Web | Auth |
 | `WORKOS_COOKIE_PASSWORD` | Web | Session cookie encryption |
