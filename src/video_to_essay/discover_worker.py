@@ -133,7 +133,7 @@ def _classify_videos(video_ids: list[str], api_key: str) -> dict[str, VideoClass
             result[vid] = VideoClassification(
                 is_active_stream=bool(live_details and "actualEndTime" not in live_details),
                 is_livestream=bool(live_details),
-                is_short=duration_secs <= 60 and duration_secs > 0,
+                is_short=duration_secs <= 180 and duration_secs > 0,
             )
     return result
 
