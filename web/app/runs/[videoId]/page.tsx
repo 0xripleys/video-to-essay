@@ -7,6 +7,9 @@ import {
 import { listExpIds, listManifests } from "@/app/lib/experiments";
 import RunDetail from "./RunDetail";
 
+// Reads live data from the database and S3 at request time; never prerender at build.
+export const dynamic = "force-dynamic";
+
 const ARTIFACT_PATHS = [
   "00_download/metadata.json",
   "01_transcript/transcript.txt",
