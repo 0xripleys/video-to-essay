@@ -95,6 +95,7 @@ MIGRATIONS = [
     "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS exclude_livestreams BOOLEAN NOT NULL DEFAULT FALSE",
     "ALTER TABLE videos ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMPTZ",
     "ALTER TABLE videos ADD COLUMN IF NOT EXISTS processing_worker_id TEXT",
+    "ALTER TABLE videos ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ",
 ]
 
 
@@ -293,12 +294,13 @@ def create_video(
     video_title: str | None = None,
     matched_playlist_ids: list[str] | None = None,
     is_livestream: bool = False,
+    published_at: "datetime | str | None" = None,
 ) -> str:
     video_id = _uid()
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO videos (id, youtube_video_id, youtube_url, video_title, channel_id, matched_playlist_ids, is_livestream, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-            (video_id, youtube_video_id, youtube_url, video_title, channel_id, matched_playlist_ids, is_livestream, _now()),
+            "INSERT INTO videos (id, youtube_video_id, youtube_url, video_title, channel_id, matched_playlist_ids, is_livestream, published_at, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (video_id, youtube_video_id, youtube_url, video_title, channel_id, matched_playlist_ids, is_livestream, published_at, _now()),
         )
         conn.commit()
     return video_id
@@ -475,6 +477,11 @@ def create_delivery(
 def create_subscription_deliveries() -> int:
     """Create delivery rows for processed subscription videos that haven't been delivered yet.
 
+    A video is only wired to a subscription if it was published after that
+    subscription was created (``COALESCE(published_at, created_at) > s.created_at``),
+    so subscribers never receive videos from before they subscribed. Legacy rows
+    without ``published_at`` fall back to their discovery time (``created_at``).
+
     Returns the number of rows created.
     """
     with _connect() as conn:
@@ -491,6 +498,7 @@ def create_subscription_deliveries() -> int:
               AND d.id IS NULL
               AND (s.playlist_ids IS NULL OR v.matched_playlist_ids && s.playlist_ids)
               AND (s.exclude_livestreams = FALSE OR v.is_livestream = FALSE)
+              AND COALESCE(v.published_at, v.created_at) > s.created_at
             ON CONFLICT DO NOTHING
             """
         )

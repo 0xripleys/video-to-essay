@@ -1,6 +1,7 @@
 """Tests 44-69: database CRUD, state transitions, queue queries, deliveries."""
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 import uuid
 
 from video_to_essay import db
@@ -419,6 +420,87 @@ def test_sub_deliveries_playlist_filter(pg_container):
     pending = db.get_pending_deliveries()
     assert len(pending) == 1
     assert pending[0]["video_id"] == vid_a
+
+
+# -- Regression: per-subscriber publish cutoff -------------------------------
+#
+# A subscriber must only receive videos published AFTER they subscribed.
+# The bug: the discover worker's cutoff was anchored to the (shared) channel
+# row, so adding/re-adding a channel backfilled every historical video. The
+# authoritative fix lives at the delivery layer — create_subscription_deliveries
+# only wires a video to a subscription when the video was published after that
+# subscription was created.
+
+def test_sub_deliveries_excludes_videos_published_before_subscription(pg_container):
+    """Videos published before the subscription's created_at are not delivered."""
+    uid = make_user()
+    cid = make_channel()
+    sid = db.create_subscription(uid, cid)
+    sub_created = db.get_subscription(sid)["created_at"]
+
+    # Published a day BEFORE subscribing → must be excluded
+    old_vid = make_video(
+        channel_id=cid, published_at=sub_created - timedelta(days=1)
+    )
+    db.mark_video_downloaded(old_vid)
+    db.mark_video_processed(old_vid)
+
+    # Published after subscribing → must be delivered
+    new_vid = make_video(
+        channel_id=cid, published_at=sub_created + timedelta(minutes=5)
+    )
+    db.mark_video_downloaded(new_vid)
+    db.mark_video_processed(new_vid)
+
+    count = db.create_subscription_deliveries()
+    assert count == 1
+
+    pending = db.get_pending_deliveries()
+    assert [p["video_id"] for p in pending] == [new_vid]
+
+
+def test_sub_deliveries_per_subscriber_publish_cutoff(raw_conn):
+    """A mid-published video reaches the earlier subscriber but not the later one."""
+    cid = make_channel()
+    early_user = make_user()
+    late_user = make_user()
+    early_sid = db.create_subscription(early_user, cid)
+    late_sid = db.create_subscription(late_user, cid)
+
+    # Backdate the early subscription well into the past
+    raw_conn.execute(
+        "UPDATE subscriptions SET created_at = %s WHERE id = %s",
+        (datetime.now(timezone.utc) - timedelta(days=10), early_sid),
+    )
+    raw_conn.commit()
+    late_created = db.get_subscription(late_sid)["created_at"]
+
+    # Published between the two subscription times: after early, before late
+    vid = make_video(channel_id=cid, published_at=late_created - timedelta(days=1))
+    db.mark_video_downloaded(vid)
+    db.mark_video_processed(vid)
+
+    count = db.create_subscription_deliveries()
+    assert count == 1
+
+    pending = db.get_pending_deliveries()
+    assert len(pending) == 1
+    assert pending[0]["user_id"] == early_user
+
+
+def test_sub_deliveries_falls_back_to_created_at_when_no_published_at(pg_container):
+    """Legacy videos without published_at fall back to discovery time (created_at)."""
+    uid = make_user()
+    cid = make_channel()
+    db.create_subscription(uid, cid)
+
+    # published_at omitted → NULL; created_at is set to now (after the sub)
+    vid = make_video(channel_id=cid)
+    db.mark_video_downloaded(vid)
+    db.mark_video_processed(vid)
+
+    count = db.create_subscription_deliveries()
+    assert count == 1
 
 
 # -- Test 63: create_subscription_deliveries — exclude livestreams -----------
