@@ -270,13 +270,34 @@ def test_check_channel_skips_unmatched_playlist(raw_conn):
 
 
 # ---------------------------------------------------------------------------
-# M6: Inserts without playlist check when any subscriber is unfiltered
+# M6: An unfiltered subscriber still inserts videos outside the filtered
+# subscriber's playlists (the unfiltered sub wants everything), but the video
+# is recorded with no matched playlists.
 # ---------------------------------------------------------------------------
 
 
+def _mock_playlist_membership(router, playlist_id, video_ids, now):
+    """Mock a playlist membership lookup containing the given video ids."""
+    items = [
+        {
+            "snippet": {
+                "resourceId": {"videoId": v},
+                "title": v,
+                "publishedAt": now.isoformat(),
+                "channelTitle": "Test Channel",
+            }
+        }
+        for v in video_ids
+    ]
+    router.get(
+        PLAYLIST_ITEMS_URL, params__contains={"playlistId": playlist_id}
+    ).mock(return_value=httpx.Response(200, json={"items": items}))
+
+
 @respx.mock
-def test_check_channel_skips_playlist_check_when_unfiltered(raw_conn):
-    """When any subscriber has no playlist filter, skip playlist membership check entirely."""
+def test_check_channel_inserts_for_unfiltered_sub_outside_playlists(raw_conn):
+    """An unfiltered subscriber receives videos not in any filtered playlist,
+    recorded with empty matched_playlist_ids."""
     now = datetime.now(timezone.utc)
     channel = make_channel()
 
@@ -297,13 +318,77 @@ def test_check_channel_skips_playlist_check_when_unfiltered(raw_conn):
     mock_classify(respx, [
         (vid, "PT10M0S", None),
     ])
-
-    # Do NOT mock PLfoo — if it's called, respx will raise an error
+    # Video is NOT in PLfoo — but the unfiltered subscriber still wants it.
+    _mock_playlist_membership(respx, "PLfoo", [], now)
 
     count = _check_channel(channel, API_KEY)
 
     assert count == 1
-    assert db.get_video_by_youtube_id(vid) is not None
+    v = db.get_video_by_youtube_id(vid)
+    assert v is not None
+    assert v["matched_playlist_ids"] == []
+
+
+# ---------------------------------------------------------------------------
+# M6b: Regression — a filtered subscriber's playlist videos are recorded even
+# when another subscriber on the same channel is unfiltered. Previously the
+# unfiltered sub short-circuited the membership check and stored NULL, so the
+# filtered subscriber never received its own playlist's videos.
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+def test_check_channel_records_playlist_match_with_unfiltered_sub(raw_conn):
+    now = datetime.now(timezone.utc)
+    channel = make_channel()
+
+    user_unfiltered = make_user()
+    db.create_subscription(user_unfiltered, channel["id"])
+    user_filtered = make_user()
+    db.create_subscription(user_filtered, channel["id"], playlist_ids=["PLfoo"])
+
+    channel = set_last_checked(raw_conn, channel, now - timedelta(hours=1))
+
+    vid = f"vid_{_uniq()}"
+    published = now - timedelta(minutes=30)
+
+    mock_uploads(respx, channel, [(vid, "In PLfoo", published)])
+    mock_classify(respx, [(vid, "PT10M0S", None)])
+    # Video IS in PLfoo
+    _mock_playlist_membership(respx, "PLfoo", [vid], now)
+
+    count = _check_channel(channel, API_KEY)
+
+    assert count == 1
+    v = db.get_video_by_youtube_id(vid)
+    assert v["matched_playlist_ids"] == ["PLfoo"]
+
+
+# ---------------------------------------------------------------------------
+# M6c: Video publish time is persisted so the delivery layer can enforce the
+# per-subscriber "published after subscribing" cutoff.
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+def test_check_channel_stores_published_at(raw_conn):
+    now = datetime.now(timezone.utc)
+    channel = make_channel()
+    user_id = make_user()
+    db.create_subscription(user_id, channel["id"])
+    channel = set_last_checked(raw_conn, channel, now - timedelta(hours=1))
+
+    vid = f"vid_{_uniq()}"
+    published = now - timedelta(minutes=30)
+
+    mock_uploads(respx, channel, [(vid, "V", published)])
+    mock_classify(respx, [(vid, "PT10M0S", None)])
+
+    _check_channel(channel, API_KEY)
+
+    v = db.get_video_by_youtube_id(vid)
+    assert v["published_at"] is not None
+    assert abs((v["published_at"] - published).total_seconds()) < 2
 
 
 # ---------------------------------------------------------------------------

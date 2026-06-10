@@ -2,6 +2,9 @@ import Link from "next/link";
 import { listAllVideos, videoStatus, type VideoStatus } from "@/app/lib/db";
 import RunsListControls from "./RunsListControls";
 
+// Reads live data from the database at request time; never prerender at build.
+export const dynamic = "force-dynamic";
+
 const PAGE_SIZE = 50;
 
 const STATUS_FILTERS: { label: string; value: VideoStatus | "all" }[] = [

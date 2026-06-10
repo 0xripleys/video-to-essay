@@ -6,6 +6,9 @@ import {
   type CellSummary,
 } from "@/app/lib/experiments";
 
+// Reads live data from S3 at request time; never prerender at build.
+export const dynamic = "force-dynamic";
+
 interface AggregateRow {
   variant: string;
   slug: string;

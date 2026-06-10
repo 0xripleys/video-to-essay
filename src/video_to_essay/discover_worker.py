@@ -61,32 +61,45 @@ def _video_in_playlist(video_id: str, playlist_id: str, api_key: str) -> bool:
 
 def _check_playlist_membership(
     video_id: str, channel_id: str, api_key: str
-) -> list[str] | None:
-    """Check whether a new video should be inserted based on subscription playlist filters.
+) -> tuple[list[str] | None, bool]:
+    """Resolve playlist filtering for a candidate video, per subscription.
 
-    Returns None if any subscription is unfiltered (insert without restriction).
-    Returns a list of matched playlist IDs if all subscriptions are filtered.
-    Returns an empty list if the video matches no playlists (skip it).
+    Returns ``(matched_playlist_ids, wanted)`` where:
+      - ``matched_playlist_ids`` is the list of filtered subscribers' playlists
+        the video belongs to, or ``None`` when no subscriber filters by playlist.
+        This is stored on the video row so the delivery layer can match each
+        subscription's ``playlist_ids`` against it.
+      - ``wanted`` is True if at least one active subscriber should receive the
+        video — either because they are unfiltered, or because the video is in
+        one of their filtered playlists.
+
+    Playlist membership is always computed for every filtered subscriber, even
+    when an unfiltered subscriber coexists, so a filtered subscriber still
+    receives videos from its own playlists.
     """
     subs = db.get_channel_subscriptions(channel_id)
     if not subs:
-        return []  # no subscribers at all — skip
+        return None, False  # no subscribers at all — skip
 
-    # If any subscription wants all uploads, no filtering needed
-    if any(s["playlist_ids"] is None for s in subs):
-        return None
+    has_unfiltered = any(s["playlist_ids"] is None for s in subs)
 
-    # All subscriptions are filtered — collect unique playlist IDs
-    all_playlist_ids: set[str] = set()
+    # Collect every playlist any filtered subscriber cares about
+    filtered_playlist_ids: set[str] = set()
     for s in subs:
-        all_playlist_ids.update(s["playlist_ids"])
+        if s["playlist_ids"]:
+            filtered_playlist_ids.update(s["playlist_ids"])
 
-    matched: list[str] = []
-    for pl_id in all_playlist_ids:
-        if _video_in_playlist(video_id, pl_id, api_key):
-            matched.append(pl_id)
+    if not filtered_playlist_ids:
+        # Only unfiltered subscribers — nothing to record, wire if anyone wants it
+        return None, has_unfiltered
 
-    return matched
+    matched = [
+        pl_id
+        for pl_id in filtered_playlist_ids
+        if _video_in_playlist(video_id, pl_id, api_key)
+    ]
+    wanted = has_unfiltered or bool(matched)
+    return matched, wanted
 
 
 def _parse_iso8601_duration(duration: str) -> int:
@@ -211,15 +224,18 @@ def _check_channel(channel: dict, api_key: str) -> int:
             if existing:
                 continue
 
-            # Check playlist filtering
-            membership = _check_playlist_membership(video_id, channel["id"], api_key)
-            if membership is not None and len(membership) == 0:
+            # Check playlist filtering (per subscription)
+            membership, wanted = _check_playlist_membership(
+                video_id, channel["id"], api_key
+            )
+            if not wanted:
                 continue  # no subscriber wants this video
 
             candidates.append({
                 "video_id": video_id,
                 "title": snippet.get("title"),
                 "membership": membership,
+                "published_at": published,
             })
 
         # Stop paginating if we hit old videos or there are no more pages
@@ -261,6 +277,7 @@ def _check_channel(channel: dict, api_key: str) -> int:
             video_title=c["title"],
             matched_playlist_ids=c["membership"],
             is_livestream=bool(info and info.is_livestream),
+            published_at=c["published_at"],
         )
         new_count += 1
 

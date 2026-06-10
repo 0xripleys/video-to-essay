@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { listExpIds, listManifests, type Manifest } from "@/app/lib/experiments";
 
+// Reads live data from S3 at request time; never prerender at build.
+export const dynamic = "force-dynamic";
+
 function formatRelative(date: string): string {
   const d = new Date(date);
   const ms = Date.now() - d.getTime();

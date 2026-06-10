@@ -14,6 +14,9 @@ import {
 import { getRunArtifact } from "@/app/lib/s3";
 import SideBySide from "./SideBySide";
 
+// Reads live data from S3 at request time; never prerender at build.
+export const dynamic = "force-dynamic";
+
 const FULL_STEPS = [
   "02_filter_sponsors",
   "03_essay",
